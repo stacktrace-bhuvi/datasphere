@@ -60,8 +60,10 @@ class SCM:
         noise_type: str = "gaussian",
         noise_scale: float = 1.0,
         interaction_prob: float = 0.0,
+        standardize: bool = True,
+        clip_bound: float | None = 10.0,
     ) -> SCM:
-        """Procedurally build an SCM with guaranteed invariants."""
+        """Procedurally build an SCM with guaranteed invariants and variance preservation."""
         G = generate_dag(family, d, seed)
         rng = np.random.default_rng(seed)
 
@@ -77,16 +79,17 @@ class SCM:
             node_noise = NoiseModel(noise_type=noise_type, scale=n_scale)
 
             if k == 0:
-                # Root node: standard linear with noise
+                # Root node
                 mechanisms[node] = Mechanism(
                     node_name=node,
                     parents=[],
                     mechanism_type="linear",
-                    bias=float(rng.normal(0.0, 0.5)),
+                    bias=float(rng.normal(0.0, 0.3)),
                     noise_model=node_noise,
+                    standardize=standardize,
+                    clip_bound=clip_bound,
                 )
             else:
-                # Weights drawn uniformly in [-1.5, -0.5] U [0.5, 1.5]
                 signs = rng.choice([-1.0, 1.0], size=k)
                 mags = rng.uniform(0.5, 1.5, size=k)
                 weights = [float(s * m) for s, m in zip(signs, mags)]
@@ -96,7 +99,6 @@ class SCM:
                 has_interaction = (k >= 2) and (rng.random() < interaction_prob)
 
                 if has_interaction:
-                    # Choose a pair for interaction
                     p1, p2 = parents[0], parents[1]
                     interaction_weight = float(rng.uniform(0.3, 0.8) * rng.choice([-1.0, 1.0]))
                     nl_types = ["linear"] * k
@@ -109,6 +111,8 @@ class SCM:
                         nonlinearities=nl_types,
                         interaction_weights={f"{p1}*{p2}": interaction_weight},
                         noise_model=node_noise,
+                        standardize=standardize,
+                        clip_bound=clip_bound,
                     )
                 elif is_nonlinear:
                     nl_types = [str(rng.choice(nonlinear_options)) for _ in range(k)]
@@ -120,6 +124,8 @@ class SCM:
                         bias=bias,
                         nonlinearities=nl_types,
                         noise_model=node_noise,
+                        standardize=standardize,
+                        clip_bound=clip_bound,
                     )
                 else:
                     mechanisms[node] = Mechanism(
@@ -130,6 +136,8 @@ class SCM:
                         bias=bias,
                         nonlinearities=["linear"] * k,
                         noise_model=node_noise,
+                        standardize=standardize,
+                        clip_bound=clip_bound,
                     )
 
         metrics = compute_graph_metrics(G, d)
@@ -146,6 +154,8 @@ class SCM:
             "noise_scale": noise_scale,
             "has_confounding": metrics["has_confounding"],
             "mediation_share": metrics["mediation_share"],
+            "standardize": standardize,
+            "clip_bound": clip_bound,
         }
 
         return cls(graph=G, mechanisms=mechanisms, metadata=metadata)
@@ -154,7 +164,6 @@ class SCM:
         """Draw deterministic noise for all nodes using common random numbers."""
         noise_draws: dict[str, np.ndarray] = {}
         for idx, node in enumerate(self.nodes):
-            # Deterministic per-node RNG derived from master seed
             node_rng = np.random.default_rng([seed, idx + 1000])
             noise_draws[node] = self.mechanisms[node].noise_model.sample(n, node_rng)
         return noise_draws
@@ -190,7 +199,6 @@ class SCM:
         noise_draws = self._draw_noise(n, seed)
         values: dict[str, np.ndarray] = {}
 
-        # Pre-broadcast intervention arrays
         interv_arrays: dict[str, np.ndarray] = {}
         for k, v in interventions.items():
             if np.isscalar(v):
@@ -227,7 +235,6 @@ class SCM:
         if X_arr.shape[1] != self.d:
             raise ValueError(f"Expected input with {self.d} feature columns, got {X_arr.shape[1]}")
 
-        # Map feature names to column arrays
         feat_map = {f"X{i+1}": X_arr[:, i] for i in range(self.d)}
         y_mech = self.mechanisms["Y"]
         parent_vals = {p: feat_map[p] for p in y_mech.parents}
@@ -241,51 +248,83 @@ class SCM:
         delta_sd: float = 1.0,
         seed: int = 0,
         signed: bool = False,
+        n_ref: int | None = None,
+        n_noise_per_ref: int | None = None,
     ) -> np.ndarray:
         """Compute exact total interventional effect tau_j for each feature X_j.
 
         tau_j = mean over reference values x drawn from marginal of X_j of:
           |E[Y | do(X_j = x + delta_sd * sd_j)] - E[Y | do(X_j = x - delta_sd * sd_j)]| / 2
         (or signed variant if signed=True).
-        Uses common random numbers (CRN).
+
+        Supports two evaluation schemes:
+          1. Default (n_ref is None): Single-pass CRN with n_mc samples.
+          2. Nested (n_ref and n_noise_per_ref provided): draws n_ref reference values from P(X_j),
+             and for each computes the inner expectation over n_noise_per_ref noise draws.
         """
-        # Step 1: Draw observational reference points to sample from P(X_j) and compute sd_j
-        obs = self.sample(n=n_mc, seed=seed)
         effects = np.zeros(self.d, dtype=np.float64)
 
-        for j_idx, feat in enumerate(self.features):
-            sd_j = float(obs[feat].std())
-            if sd_j < 1e-12:
-                effects[j_idx] = 0.0
-                continue
-
-            x_ref = obs[feat].values
-            shift = delta_sd * sd_j
-
-            # Using CRN with seed + 1 for the intervention runs
+        if n_ref is not None and n_noise_per_ref is not None:
+            # Two-level nested reference sampling
+            obs_ref = self.sample(n=max(n_ref, 5000), seed=seed)
             crn_seed = seed + 42
-            df_plus = self.sample_do(n_mc, seed=crn_seed, interventions={feat: x_ref + shift})
-            df_minus = self.sample_do(n_mc, seed=crn_seed, interventions={feat: x_ref - shift})
+            total_n = n_ref * n_noise_per_ref
 
-            diff = (df_plus["Y"].values - df_minus["Y"].values) / 2.0
-            if signed:
-                effects[j_idx] = float(np.mean(diff))
-            else:
-                effects[j_idx] = float(np.mean(np.abs(diff)))
+            for j_idx, feat in enumerate(self.features):
+                sd_j = float(obs_ref[feat].std())
+                if sd_j < 1e-12:
+                    effects[j_idx] = 0.0
+                    continue
+
+                # Select n_ref points and expand across noise draws
+                ref_pts = obs_ref[feat].values[:n_ref]
+                shift = delta_sd * sd_j
+                ref_expanded_plus = np.repeat(ref_pts + shift, n_noise_per_ref)
+                ref_expanded_minus = np.repeat(ref_pts - shift, n_noise_per_ref)
+
+                df_plus = self.sample_do(total_n, seed=crn_seed, interventions={feat: ref_expanded_plus})
+                df_minus = self.sample_do(total_n, seed=crn_seed, interventions={feat: ref_expanded_minus})
+
+                # Compute E[Y | do(x + delta)] and E[Y | do(x - delta)] per reference point
+                y_plus = df_plus["Y"].values.reshape(n_ref, n_noise_per_ref).mean(axis=1)
+                y_minus = df_minus["Y"].values.reshape(n_ref, n_noise_per_ref).mean(axis=1)
+
+                diff = (y_plus - y_minus) / 2.0
+                if signed:
+                    effects[j_idx] = float(np.mean(diff))
+                else:
+                    effects[j_idx] = float(np.mean(np.abs(diff)))
+        else:
+            # Single-pass 200,000 CRN estimation
+            obs = self.sample(n=n_mc, seed=seed)
+            crn_seed = seed + 42
+
+            for j_idx, feat in enumerate(self.features):
+                sd_j = float(obs[feat].std())
+                if sd_j < 1e-12:
+                    effects[j_idx] = 0.0
+                    continue
+
+                x_ref = obs[feat].values
+                shift = delta_sd * sd_j
+
+                df_plus = self.sample_do(n_mc, seed=crn_seed, interventions={feat: x_ref + shift})
+                df_minus = self.sample_do(n_mc, seed=crn_seed, interventions={feat: x_ref - shift})
+
+                diff = (df_plus["Y"].values - df_minus["Y"].values) / 2.0
+                if signed:
+                    effects[j_idx] = float(np.mean(diff))
+                else:
+                    effects[j_idx] = float(np.mean(np.abs(diff)))
 
         return effects
 
     def analytic_linear_total_effects(self, delta_sd: float = 1.0, signed: bool = False) -> np.ndarray:
-        """Compute exact analytic total effects for purely linear SCMs.
-
-        In a linear SCM, total effect = sum over directed paths of weight products * (delta_sd * sd_j).
-        """
-        # Check all mechanisms are linear
+        """Compute exact analytic total effects for purely linear SCMs."""
         for m in self.mechanisms.values():
             if m.mechanism_type != "linear":
                 raise ValueError("analytic_linear_total_effects only supported for linear SCMs.")
 
-        # Estimate marginal standard deviations from a clean observational run
         obs = self.sample(n=50_000, seed=0)
         sds = [float(obs[f].std()) for f in self.features]
 
@@ -297,14 +336,15 @@ class SCM:
                 effects[j_idx] = 0.0
                 continue
 
-            # Sum over all directed paths of product of edge weights
             total_path_weight = 0.0
             for path in nx.all_simple_paths(self.graph, source=feat, target="Y"):
                 path_weight = 1.0
                 for u, v in zip(path[:-1], path[1:]):
                     mech_v = self.mechanisms[v]
                     p_idx = mech_v.parents.index(u)
-                    path_weight *= mech_v.weights[p_idx]
+                    # Account for standardization scale factor if enabled
+                    scale = 1.0 / np.sqrt(len(mech_v.parents)) if mech_v.standardize else 1.0
+                    path_weight *= (mech_v.weights[p_idx] * scale)
                 total_path_weight += path_weight
 
             tau = total_path_weight * delta_sd * sd_j

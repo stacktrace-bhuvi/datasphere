@@ -23,6 +23,8 @@ def build(
     noise_type: str = "gaussian",
     noise_scale: float = 1.0,
     interaction_prob: float = 0.0,
+    standardize: bool = True,
+    clip_bound: float | None = 10.0,
 ) -> SCM:
 ```
 Procedurally instantiates a validated SCM from a specified graph family.
@@ -35,6 +37,8 @@ Procedurally instantiates a validated SCM from a specified graph family.
   - `noise_type`: `"gaussian"` or `"laplace"`.
   - `noise_scale`: Standard deviation / scale parameter $\sigma > 0$.
   - `interaction_prob`: Probability of pairwise feature interactions ($X_i \cdot X_j$).
+  - `standardize` (`bool`): When `True` (default), incoming parent linear combinations are scaled by $1 / \sqrt{k}$ (where $k$ is the number of parents) and non-linear activations (e.g. `quadratic`, `relu`) are centered and scaled. This strictly prevents exponential variance compounding and explosion across deep graphs.
+  - `clip_bound` (`float | None`): Bounds the structural equation output within $[-B, B]$ (default $10.0$) to guarantee numerical stability.
 - **Invariants Guaranteed:**
   - The graph is a directed acyclic graph (DAG).
   - Feature nodes are named `X1`, `X2`, ..., `Xd`.
@@ -95,6 +99,8 @@ def true_effects(
     delta_sd: float = 1.0,
     seed: int = 0,
     signed: bool = False,
+    n_ref: int | None = None,
+    n_noise_per_ref: int | None = None,
 ) -> np.ndarray:
 ```
 Computes the exact total causal interventional effect $\tau_j$ for each feature $X_j$ on $Y$ under the do-operator.
@@ -102,11 +108,16 @@ Computes the exact total causal interventional effect $\tau_j$ for each feature 
 - **Formula:**
   $$\tau_j = \mathbb{E}_{x \sim P(X_j)} \left[ \frac{\left| \mathbb{E}[Y \mid \text{do}(X_j = x + \delta \sigma_j)] - \mathbb{E}[Y \mid \text{do}(X_j = x - \delta \sigma_j)] \right|}{2} \right]$$
   If `signed=True`, the absolute value is omitted to preserve directionality.
+- **Evaluation Modes:**
+  1. **Single-Pass CRN (Default, `n_ref=None`):** Evaluates $n_{\text{mc}} = 200,000$ paired observational draws simultaneously with Common Random Numbers. Noise cancels out in the difference, achieving exact expectation in $\approx 1.5$ seconds for $d=10$.
+  2. **Nested Reference Sampling (`n_ref` and `n_noise_per_ref` specified):** Explicitly draws $n_{\text{ref}}$ reference values from $P(X_j)$ (e.g. $50$) and computes the inner expectation $\mathbb{E}[Y \mid \text{do}(X_j = x \pm \delta \sigma_j)]$ by averaging over $n_{\text{noise\_per\_ref}}$ noise draws (e.g. $20,000$) per reference value using full tensor broadcasting.
 - **Parameters:**
-  - `n_mc` (`int`): Monte Carlo sample size (default `200_000`).
+  - `n_mc` (`int`): Monte Carlo sample size for single-pass mode (default `200_000`).
   - `delta_sd` (`float`): Perturbation factor in units of marginal standard deviation $\sigma_j$ (default `1.0`).
   - `seed` (`int`): Base seed for evaluation.
   - `signed` (`bool`): If `True`, returns signed effect; if `False`, returns mean absolute effect.
+  - `n_ref` (`int | None`): Number of outer reference values from $P(X_j)$.
+  - `n_noise_per_ref` (`int | None`): Number of inner noise draws per reference value.
 - **Returns:**
   - `np.ndarray` of shape `(d,)` containing $\tau_1, \dots, \tau_d$.
 
@@ -139,7 +150,7 @@ def from_dict(cls, data: dict[str, Any]) -> SCM:
 @classmethod
 def from_json(cls, filepath: str | Path) -> SCM:
 ```
-Allows lossless round-trip serialization of the graph topology, structural equation parameters, noise models, and metadata.
+Allows lossless round-trip serialization of the graph topology, structural equation parameters, noise models, standardization settings, and metadata.
 
 ---
 
@@ -157,13 +168,17 @@ def exact_shap(
     X_explain: np.ndarray,
     X_background: np.ndarray,
     max_d: int = 10,
-    chunk_size: int = 64,
+    chunk_size: int = 8,
 ) -> np.ndarray:
 ```
-Computes exact interventional (marginal) Shapley values by full $2^d$ coalition enumeration.
+Computes exact interventional (marginal) Shapley values **fully vectorized over all $2^d$ coalitions simultaneously** via tensor broadcasting and coalition projection matrix multiplication.
 
-- **Formula:**
-  $$\phi_j(x) = \sum_{S \subseteq D \setminus \{j\}} \frac{|S|!(d - |S| - 1)!}{d!} \left( \mathbb{E}_{X_B}[f(x_{S \cup \{j\}}, (X_B)_{\overline{S \cup \{j\}}})] - \mathbb{E}_{X_B}[f(x_S, (X_B)_{\bar{S}})] \right)$$
+- **Vectorized Architecture:**
+  - Masks tensor: $(1, 2^d, 1, d)$
+  - Background tensor: $(1, 1, n_{\text{bg}}, d)$
+  - Chunk tensor: $(n_c, 1, 1, d)$
+  - Hybrid tensor: $(n_c, 2^d, n_{\text{bg}}, d)$ evaluated through $f$ without any Python loop over coalitions.
+  - Shapley value projection: $\Phi = V \cdot W$, where $V \in \mathbb{R}^{n_c \times 2^d}$ is the coalition value table and $W \in \mathbb{R}^{2^d \times d}$ is the exact precomputed combinatorial weight matrix.
 - **Guaranteed Axioms:**
   - **Efficiency:** $\sum_{j=1}^d \phi_j(x) = f(x) - \mathbb{E}_{X_B}[f(X_B)]$ within $10^{-8}$.
   - **Linear consistency:** For $f(x) = \beta^T x + b$, $\phi_j(x) = \beta_j (x_j - \bar{x}_{B, j})$.
@@ -173,7 +188,7 @@ Computes exact interventional (marginal) Shapley values by full $2^d$ coalition 
   - `X_explain`: `(n_explain, d)` array of instances to explain.
   - `X_background`: `(n_bg, d)` background/baseline distribution.
   - `max_d`: Safety check on maximum features ($d \le 10$).
-  - `chunk_size`: Vectorization chunk size to bound memory consumption.
+  - `chunk_size`: Vectorization chunk size (default 8) to bound peak RAM.
 - **Returns:**
   - `phi`: `(n_explain, d)` array of Shapley values.
 
@@ -185,7 +200,7 @@ def mean_abs_shap(
     X_explain: np.ndarray,
     X_background: np.ndarray,
     max_d: int = 10,
-    chunk_size: int = 64,
+    chunk_size: int = 8,
 ) -> np.ndarray:
 ```
 Convenience function returning the mean absolute attribution across explained instances:

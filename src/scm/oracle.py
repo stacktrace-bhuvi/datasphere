@@ -2,47 +2,44 @@
 
 from __future__ import annotations
 import math
-from itertools import combinations
 from typing import Callable
 import numpy as np
 
 
-def _precompute_coalitions(d: int) -> tuple[np.ndarray, np.ndarray, list[list[int]], list[list[int]]]:
-    """Precompute subset bitmasks, weights, and membership lists for d features.
+def _precompute_coalition_matrix(d: int) -> tuple[np.ndarray, np.ndarray]:
+    """Precompute subset bitmasks and the Shapley coalition projection matrix W.
 
     Returns:
-      masks: boolean array of shape (2^d, d) where masks[s, j] is True if j in S.
-      weights: float array of length 2^d with Shapley weights w(|S|).
-      subsets_with_j: for each feature j, list of subset indices where j in S.
-      subsets_without_j: for each feature j, list of subset indices where j not in S.
+      masks: (2^d, d) boolean array where masks[s, j] is True iff feature j is in coalition s.
+      W: (2^d, d) float64 matrix where:
+           W[s, j] = + |s-1|! (d-|s|)! / d!  if j in S
+           W[s, j] = - |s|! (d-|s|-1)! / d!  if j not in S
+         Such that phi = v_table @ W computes all Shapley values via a single matrix product.
     """
     n_subsets = 1 << d
     masks = np.zeros((n_subsets, d), dtype=bool)
-    weights = np.zeros(n_subsets, dtype=np.float64)
+    W = np.zeros((n_subsets, d), dtype=np.float64)
 
-    for s_idx in range(n_subsets):
+    for s in range(n_subsets):
         for j in range(d):
-            if (s_idx >> j) & 1:
-                masks[s_idx, j] = True
-        s_size = int(masks[s_idx].sum())
-        # Shapley weight for subset S of size |S| when adding feature j (out of d):
-        # |S|! * (d - |S| - 1)! / d!
-        if s_size < d:
-            weights[s_idx] = (
-                math.factorial(s_size) * math.factorial(d - s_size - 1) / math.factorial(d)
-            )
-
-    subsets_with_j: list[list[int]] = [[] for _ in range(d)]
-    subsets_without_j: list[list[int]] = [[] for _ in range(d)]
-
-    for s_idx in range(n_subsets):
+            if (s >> j) & 1:
+                masks[s, j] = True
+        size = int(masks[s].sum())
         for j in range(d):
-            if masks[s_idx, j]:
-                subsets_with_j[j].append(s_idx)
+            if masks[s, j]:
+                W[s, j] = (
+                    math.factorial(size - 1)
+                    * math.factorial(d - size)
+                    / math.factorial(d)
+                )
             else:
-                subsets_without_j[j].append(s_idx)
+                W[s, j] = -(
+                    math.factorial(size)
+                    * math.factorial(d - size - 1)
+                    / math.factorial(d)
+                )
 
-    return masks, weights, subsets_with_j, subsets_without_j
+    return masks, W
 
 
 def exact_shap(
@@ -50,16 +47,19 @@ def exact_shap(
     X_explain: np.ndarray,
     X_background: np.ndarray,
     max_d: int = 10,
-    chunk_size: int = 64,
+    chunk_size: int = 8,
 ) -> np.ndarray:
-    """Compute exact interventional (marginal) Shapley values by full 2^d coalition enumeration.
+    """Compute exact interventional (marginal) Shapley values fully vectorized over coalitions.
+
+    All 2^d coalitions are constructed, evaluated through f, and integrated via
+    matrix multiplication in vectorized NumPy tensors without a Python loop over coalitions.
 
     Parameters:
       f: callable mapping (N, d) array to (N,) array of predictions.
       X_explain: (n_explain, d) array of instances to explain.
       X_background: (n_background, d) baseline/reference dataset.
       max_d: maximum allowed feature dimension (default 10).
-      chunk_size: number of explain instances evaluated per chunk for memory bounding.
+      chunk_size: number of explain instances evaluated per chunk (default 8).
 
     Returns:
       phi: (n_explain, d) array of exact Shapley values.
@@ -80,58 +80,42 @@ def exact_shap(
     if d > max_d:
         raise ValueError(f"Feature dimension {d} exceeds max_d={max_d} for exact 2^d coalition enumeration.")
 
-    masks, weights, _, _ = _precompute_coalitions(d)
+    masks, W = _precompute_coalition_matrix(d)
     n_subsets = 1 << d
 
-    # Pre-evaluate v(empty) = mean(f(X_bg))
-    bg_preds = f(X_bg)
-    v_empty = float(np.mean(bg_preds))
+    # Pre-broadcast background: shape (1, 1, n_bg, d)
+    bg_bc = X_bg[np.newaxis, np.newaxis, :, :]
+    # Pre-broadcast masks: shape (1, 2^d, 1, d)
+    masks_bc = masks[np.newaxis, :, np.newaxis, :]
 
-    phi_all = np.zeros((n_explain, d), dtype=np.float64)
+    phi_chunks: list[np.ndarray] = []
 
-    # Process X_explain in chunks
+    # Process X_explain in chunks to maintain bounded memory
     for c_start in range(0, n_explain, chunk_size):
         c_end = min(c_start + chunk_size, n_explain)
         X_chunk = X_exp[c_start:c_end]
-        n_c = len(X_chunk)
+        cur_nc = len(X_chunk)
 
-        # v_table: shape (n_c, 2^d) stores v(S) for each chunk row and each subset S
-        v_table = np.zeros((n_c, n_subsets), dtype=np.float64)
-        v_table[:, 0] = v_empty
+        # Broadcast explain points: shape (cur_nc, 1, 1, d)
+        chunk_bc = X_chunk[:, np.newaxis, np.newaxis, :]
 
-        # Subset full (index n_subsets - 1): v(D) = f(X_chunk)
-        v_table[:, n_subsets - 1] = f(X_chunk)
+        # Construct all (cur_nc, 2^d, n_bg, d) hybrid combinations simultaneously
+        # For each coalition s: if masks[s, j] is True, take chunk; else take background
+        hybrid = np.where(masks_bc, chunk_bc, bg_bc)
 
-        # Intermediate subsets (1 to n_subsets - 2)
-        for s_idx in range(1, n_subsets - 1):
-            mask_s = masks[s_idx]  # boolean array of shape (d,)
+        # Vectorized evaluation over all coalitions and background draws
+        flat_hybrid = hybrid.reshape(-1, d)
+        preds = f(flat_hybrid).reshape(cur_nc, n_subsets, n_bg)
 
-            # Construct hybrid input of shape (n_c, n_bg, d)
-            # where for col in S: take from X_chunk; else: take from X_bg
-            # Efficiently tile and assign:
-            # (n_c, 1, d) broadcast with (1, n_bg, d)
-            hybrid = np.empty((n_c, n_bg, d), dtype=np.float64)
-            hybrid[:, :, mask_s] = X_chunk[:, np.newaxis, mask_s]
-            hybrid[:, :, ~mask_s] = X_bg[np.newaxis, :, ~mask_s]
+        # Marginalize over background: v_table shape (cur_nc, 2^d)
+        v_table = np.mean(preds, axis=2)
 
-            # Flatten to (n_c * n_bg, d)
-            flat_hybrid = hybrid.reshape(-1, d)
-            preds = f(flat_hybrid).reshape(n_c, n_bg)
-            v_table[:, s_idx] = np.mean(preds, axis=1)
+        # Compute Shapley values via coalition projection matrix multiplication
+        # phi_chunk shape: (cur_nc, d)
+        phi_chunk = v_table @ W
+        phi_chunks.append(phi_chunk)
 
-        # Compute Shapley values for each feature j:
-        # phi_j = sum_{S subseteq D \ {j}} w(|S|) * (v(S U {j}) - v(S))
-        for j in range(d):
-            # Mask without feature j: bit j is 0
-            # S with feature j: S | (1 << j)
-            for s_without in range(n_subsets):
-                if not ((s_without >> j) & 1):
-                    s_with = s_without | (1 << j)
-                    w = weights[s_without]
-                    diff = v_table[:, s_with] - v_table[:, s_without]
-                    phi_all[c_start:c_end, j] += w * diff
-
-    return phi_all
+    return np.vstack(phi_chunks)
 
 
 def mean_abs_shap(
@@ -139,7 +123,7 @@ def mean_abs_shap(
     X_explain: np.ndarray,
     X_background: np.ndarray,
     max_d: int = 10,
-    chunk_size: int = 64,
+    chunk_size: int = 8,
 ) -> np.ndarray:
     """Compute mean absolute Shapley values per feature across instances.
 
