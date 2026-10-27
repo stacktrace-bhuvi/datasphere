@@ -12,13 +12,12 @@ __pycache__/
 .pytest_cache/
 .coverage
 htmlcov/
+caches/
 
 # Data & outputs
 data/
-results/figures/*
-results/tables/*
-!results/figures/.gitkeep
-!results/tables/.gitkeep
+results/
+!results/.gitkeep
 
 # IDEs
 .idea/

@@ -2,7 +2,7 @@
 # Project: Predicting Explanation Error Without Causal Ground Truth
 
 dataset_name: "scm_benchmark_v1"
-n_scms_per_family: 20
+n_scms_per_family: 60
 d_range: [5, 10]
 n_samples: 2000
 base_seed: 42

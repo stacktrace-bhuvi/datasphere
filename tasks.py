@@ -7,7 +7,8 @@ Available commands:
     install          Install project dependencies from requirements.txt
     test             Run pytest test suite
     generate-small   Generate a small benchmark of 10 SCMs (sanity check)
-    generate-full    Generate the full benchmark of 100 SCMs from configs/scm_default.yaml
+    generate-full    Generate the full benchmark of 300 SCMs from configs/scm_default.yaml
+    mock             Generate mock results (attributions, errors, observables) conforming to SCHEMAS.md
 """
 
 from __future__ import annotations
@@ -57,7 +58,7 @@ def generate_small() -> int:
 
 
 def generate_full() -> int:
-    """Generate the full synthetic benchmark suite (100 SCMs)."""
+    """Generate the full synthetic benchmark suite (300 SCMs)."""
     cfg = ROOT_DIR / "configs" / "scm_default.yaml"
     out_dir = ROOT_DIR / "data" / "scms"
     return run_command([
@@ -71,11 +72,25 @@ def generate_full() -> int:
     ])
 
 
+def mock() -> int:
+    """Generate mock results (attributions, errors.csv, observables.csv) for small SCM set."""
+    script_path = ROOT_DIR / "scripts" / "make_mock_results.py"
+    return run_command([
+        sys.executable,
+        str(script_path),
+        "--scms-dir",
+        str(ROOT_DIR / "data" / "scms_small"),
+        "--results-dir",
+        str(ROOT_DIR / "results"),
+    ])
+
+
 COMMANDS = {
     "install": install,
     "test": test,
     "generate-small": generate_small,
     "generate-full": generate_full,
+    "mock": mock,
 }
 
 
