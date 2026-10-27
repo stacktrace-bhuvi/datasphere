@@ -240,9 +240,24 @@ Downstream modules evaluating explanation agreement against causal ground truth 
 
 ---
 
-## 4. Dataset Generator CLI (`src.scm.generate`)
+## 4. Dataset Generator CLI (`src.scm.generate`) and Task Runner
 
-### Command-line execution:
+### Execution via Cross-Platform Task Runner (`tasks.py`):
+```bash
+# Generate full benchmark suite (100 SCMs from configs/scm_default.yaml)
+python tasks.py generate-full
+
+# Generate small sanity benchmark suite (10 SCMs from configs/scm_small.yaml)
+python tasks.py generate-small
+
+# Run test suite
+python tasks.py test
+
+# Install dependencies
+python tasks.py install
+```
+
+### Direct CLI execution:
 ```bash
 python -m src.scm.generate --config configs/scm_default.yaml --output-dir data/scms
 ```
