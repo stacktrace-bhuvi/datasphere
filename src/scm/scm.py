@@ -50,6 +50,11 @@ class SCM:
         self.topological_order = list(nx.topological_sort(self.graph))
         self.metadata = metadata if metadata is not None else {}
 
+    @property
+    def is_linear_scm(self) -> bool:
+        """Check if all node mechanisms in the SCM are linear."""
+        return all(m.mechanism_type == "linear" for m in self.mechanisms.values())
+
     @classmethod
     def build(
         cls,
@@ -168,7 +173,7 @@ class SCM:
             noise_draws[node] = self.mechanisms[node].noise_model.sample(n, node_rng)
         return noise_draws
 
-    def sample(self, n: int, seed: int) -> pd.DataFrame:
+    def sample(self, n: int, seed: int, return_noise: bool = False) -> pd.DataFrame | tuple[pd.DataFrame, dict[str, np.ndarray]]:
         """Sample n observational draws from the SCM."""
         noise_draws = self._draw_noise(n, seed)
         values: dict[str, np.ndarray] = {}
@@ -179,7 +184,10 @@ class SCM:
             values[node] = mech.evaluate(parent_vals, noise=noise_draws[node], n_samples=n)
 
         cols = self.features + ["Y"]
-        return pd.DataFrame({c: values[c] for c in cols})
+        df = pd.DataFrame({c: values[c] for c in cols})
+        if return_noise:
+            return df, noise_draws
+        return df
 
     def sample_do(
         self,
@@ -225,6 +233,7 @@ class SCM:
 
         Takes full feature matrix of shape (n, d) or (d,), ignoring non-parents of Y.
         Feature j (0-indexed) corresponds to X_{j+1}.
+        Applies identical standardization scaling and clipping as the generative process.
         """
         X_arr = np.asarray(X, dtype=np.float64)
         is_1d = False
@@ -248,8 +257,9 @@ class SCM:
         delta_sd: float = 1.0,
         seed: int = 0,
         signed: bool = False,
-        n_ref: int | None = None,
-        n_noise_per_ref: int | None = None,
+        n_ref: int = 50,
+        n_noise_per_ref: int = 5_000,
+        mode: str = "auto",
     ) -> np.ndarray:
         """Compute exact total interventional effect tau_j for each feature X_j.
 
@@ -257,15 +267,22 @@ class SCM:
           |E[Y | do(X_j = x + delta_sd * sd_j)] - E[Y | do(X_j = x - delta_sd * sd_j)]| / 2
         (or signed variant if signed=True).
 
-        Supports two evaluation schemes:
-          1. Default (n_ref is None): Single-pass CRN with n_mc samples.
-          2. Nested (n_ref and n_noise_per_ref provided): draws n_ref reference values from P(X_j),
-             and for each computes the inner expectation over n_noise_per_ref noise draws.
+        Evaluation modes:
+          - 'auto' (default): Uses exact single-pass CRN if all mechanisms are linear (where noise
+            strictly cancels out). For nonlinear or interaction SCMs, uses the nested estimator
+            to prevent Jensen's inequality bias.
+          - 'nested': Explicitly averages over n_noise_per_ref noise draws BEFORE taking absolute value.
+          - 'single_pass': Evaluates single-pass n_mc paired draws. Note: taking |Y+ - Y-| per noise draw
+            is biased upward for nonlinear mechanisms.
         """
+        if mode not in ("auto", "nested", "single_pass"):
+            raise ValueError(f"Invalid mode '{mode}'. Must be 'auto', 'nested', or 'single_pass'.")
+
+        use_nested = (mode == "nested") or (mode == "auto" and not self.is_linear_scm)
+
         effects = np.zeros(self.d, dtype=np.float64)
 
-        if n_ref is not None and n_noise_per_ref is not None:
-            # Two-level nested reference sampling
+        if use_nested:
             obs_ref = self.sample(n=max(n_ref, 5000), seed=seed)
             crn_seed = seed + 42
             total_n = n_ref * n_noise_per_ref
@@ -276,7 +293,6 @@ class SCM:
                     effects[j_idx] = 0.0
                     continue
 
-                # Select n_ref points and expand across noise draws
                 ref_pts = obs_ref[feat].values[:n_ref]
                 shift = delta_sd * sd_j
                 ref_expanded_plus = np.repeat(ref_pts + shift, n_noise_per_ref)
@@ -342,7 +358,6 @@ class SCM:
                 for u, v in zip(path[:-1], path[1:]):
                     mech_v = self.mechanisms[v]
                     p_idx = mech_v.parents.index(u)
-                    # Account for standardization scale factor if enabled
                     scale = 1.0 / np.sqrt(len(mech_v.parents)) if mech_v.standardize else 1.0
                     path_weight *= (mech_v.weights[p_idx] * scale)
                 total_path_weight += path_weight

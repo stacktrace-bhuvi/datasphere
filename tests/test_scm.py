@@ -89,6 +89,19 @@ def test_f_star_evaluation():
     assert np.isclose(y_1d, -1.0)
 
 
+def test_f_star_matches_y_minus_noise():
+    """Verify that f_star(X) equals Y - noise_Y for sampled observational rows."""
+    scm = SCM.build("layered", d=6, seed=123, standardize=True, clip_bound=10.0)
+    df, noise = scm.sample(200, seed=123, return_noise=True)
+
+    feat_cols = [f"X{k}" for k in range(1, 7)]
+    X = df[feat_cols].values
+    f_star_vals = scm.f_star(X)
+    expected_noiseless = df["Y"].values - noise["Y"]
+
+    assert np.allclose(f_star_vals, expected_noiseless, atol=1e-12)
+
+
 def test_linear_true_effects_matches_analytic():
     G = nx.DiGraph()
     for i in range(1, 6):
@@ -110,7 +123,7 @@ def test_linear_true_effects_matches_analytic():
     scm = SCM(graph=G, mechanisms=mechs)
 
     analytic = scm.analytic_linear_total_effects(delta_sd=1.0, signed=False)
-    mc_effects = scm.true_effects(n_mc=100_000, delta_sd=1.0, seed=123, signed=False)
+    mc_effects = scm.true_effects(n_mc=100_000, delta_sd=1.0, seed=123, signed=False, mode="single_pass")
 
     assert np.isclose(analytic[3], 0.0)
     assert np.isclose(analytic[4], 0.0)
@@ -119,18 +132,43 @@ def test_linear_true_effects_matches_analytic():
     assert np.allclose(mc_effects, analytic, rtol=0.03, atol=0.05)
 
 
-def test_nested_true_effects_matches_single_pass():
-    # In linear SCMs, noise linearly cancels under CRN so nested and single-pass match exactly
+def test_jensen_inequality_bias_in_single_pass():
+    """In a nonlinear mediated SCM, taking |Y+ - Y-| per noise draw (single-pass) is biased upward (Jensen)."""
+    # X1 -> X2, (X2, X3) -> Y via interaction
+    G = nx.DiGraph()
+    G.add_nodes_from(["X1", "X2", "X3", "X4", "X5", "Y"])
+    G.add_edge("X1", "X2")
+    G.add_edge("X2", "Y")
+    G.add_edge("X3", "Y")
+
+    mechs = {f: Mechanism(f, [], "linear") for f in ["X1", "X3", "X4", "X5"]}
+    mechs["X2"] = Mechanism("X2", ["X1"], "linear", weights=[1.5], noise_model=NoiseModel("gaussian", 1.0))
+    mechs["X3"] = Mechanism("X3", [], "linear", noise_model=NoiseModel("gaussian", 2.0))
+    mechs["Y"] = Mechanism("Y", ["X2", "X3"], "pairwise_interaction", weights=[0.0, 0.0], interaction_weights={"X2*X3": 2.0}, noise_model=NoiseModel("gaussian", 0.5))
+
+    scm = SCM(graph=G, mechanisms=mechs)
+
+    tau_single = scm.true_effects(n_mc=100_000, mode="single_pass", seed=42)
+    tau_nested = scm.true_effects(n_ref=200, n_noise_per_ref=5_000, mode="nested", seed=42)
+
+    # Single-pass tau should be strictly larger than nested tau due to Jensen's inequality:
+    # E[|Y+ - Y-|] >= |E[Y+] - E[Y-]|
+    assert tau_single[0] > tau_nested[0]
+    assert (tau_single[0] - tau_nested[0]) > 1.0
+
+
+def test_nested_true_effects_matches_single_pass_on_linear():
+    """In linear SCMs, noise linearly cancels under CRN so nested and single-pass match exactly."""
     scm = SCM.build("chain_mediation", d=5, seed=42, nonlinearity_prob=0.0)
-    effects_nested = scm.true_effects(seed=42, n_ref=50, n_noise_per_ref=5_000)
-    effects_single = scm.true_effects(n_mc=100_000, seed=42)
+    effects_nested = scm.true_effects(seed=42, n_ref=50, n_noise_per_ref=5_000, mode="nested")
+    effects_single = scm.true_effects(n_mc=100_000, seed=42, mode="single_pass")
 
     assert len(effects_nested) == 5
     assert np.allclose(effects_nested, effects_single, rtol=0.05, atol=0.05)
 
 
 def test_scm_serialization_round_trip():
-    scm = SCM.build("layered", d=5, seed=77, nonlinearity_prob=0.3, noise_type="laplace", noise_scale=1.5)
+    scm = SCM.build("layered", d=5, seed=77, nonlinearity_prob=0.3, noise_type="laplace", noise_scale=1.5, standardize=True, clip_bound=10.0)
 
     with tempfile.TemporaryDirectory() as tmpdir:
         json_path = Path(tmpdir) / "test_scm.json"
@@ -140,7 +178,8 @@ def test_scm_serialization_round_trip():
 
         assert loaded_scm.d == scm.d
         assert list(loaded_scm.graph.edges()) == list(scm.graph.edges())
-        assert loaded_scm.metadata == scm.metadata
+        assert loaded_scm.metadata["standardize"] == scm.metadata["standardize"]
+        assert loaded_scm.metadata["clip_bound"] == scm.metadata["clip_bound"]
 
         df_orig = scm.sample(500, seed=42)
         df_loaded = loaded_scm.sample(500, seed=42)

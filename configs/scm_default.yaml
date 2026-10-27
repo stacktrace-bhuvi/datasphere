@@ -13,6 +13,10 @@ interaction_prob: 0.2
 noise_type: "gaussian"
 noise_scale: 1.0
 
+# Stabilization and bounding
+standardize: true
+clip_bound: 10.0
+
 # Supported graph families
 families:
   - chain_mediation

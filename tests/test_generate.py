@@ -44,6 +44,8 @@ def test_generate_benchmark_and_manifest():
             "noise_scale",
             "has_confounding",
             "mediation_share",
+            "standardize",
+            "clip_bound",
             "seed",
             "split",
         ]

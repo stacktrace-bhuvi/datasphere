@@ -23,6 +23,8 @@ def generate_benchmark_from_config(config: dict[str, Any], output_dir: str | Pat
     inter_prob = float(config.get("interaction_prob", 0.2))
     noise_type = str(config.get("noise_type", "gaussian"))
     noise_scale = float(config.get("noise_scale", 1.0))
+    standardize = bool(config.get("standardize", True))
+    clip_bound = float(config["clip_bound"]) if config.get("clip_bound") is not None else 10.0
 
     families = config.get("families", [
         "chain_mediation",
@@ -42,7 +44,6 @@ def generate_benchmark_from_config(config: dict[str, Any], output_dir: str | Pat
         split = "heldout" if family in heldout_families else "train"
 
         for i in range(n_per_family):
-            # Vary d systematically across [d_min, d_max]
             d = d_min + ((i + f_idx) % (d_max - d_min + 1))
             seed = base_seed + (f_idx * 10_000) + i
             scm_id = f"scm_{global_idx:04d}_{family}_d{d}"
@@ -55,6 +56,8 @@ def generate_benchmark_from_config(config: dict[str, Any], output_dir: str | Pat
                 noise_type=noise_type,
                 noise_scale=noise_scale,
                 interaction_prob=inter_prob,
+                standardize=standardize,
+                clip_bound=clip_bound,
             )
 
             # Save SCM JSON
@@ -71,6 +74,8 @@ def generate_benchmark_from_config(config: dict[str, Any], output_dir: str | Pat
                 "noise_scale": noise_scale,
                 "has_confounding": scm.metadata.get("has_confounding", False),
                 "mediation_share": scm.metadata.get("mediation_share", 0.0),
+                "standardize": standardize,
+                "clip_bound": clip_bound,
                 "seed": seed,
                 "split": split,
             })

@@ -48,6 +48,7 @@ def exact_shap(
     X_background: np.ndarray,
     max_d: int = 10,
     chunk_size: int = 8,
+    zero_tol: float = 1e-12,
 ) -> np.ndarray:
     """Compute exact interventional (marginal) Shapley values fully vectorized over coalitions.
 
@@ -60,6 +61,7 @@ def exact_shap(
       X_background: (n_background, d) baseline/reference dataset.
       max_d: maximum allowed feature dimension (default 10).
       chunk_size: number of explain instances evaluated per chunk (default 8).
+      zero_tol: values below this tolerance are zeroed to prevent floating-point noise from breaking ties.
 
     Returns:
       phi: (n_explain, d) array of exact Shapley values.
@@ -100,7 +102,6 @@ def exact_shap(
         chunk_bc = X_chunk[:, np.newaxis, np.newaxis, :]
 
         # Construct all (cur_nc, 2^d, n_bg, d) hybrid combinations simultaneously
-        # For each coalition s: if masks[s, j] is True, take chunk; else take background
         hybrid = np.where(masks_bc, chunk_bc, bg_bc)
 
         # Vectorized evaluation over all coalitions and background draws
@@ -111,24 +112,43 @@ def exact_shap(
         v_table = np.mean(preds, axis=2)
 
         # Compute Shapley values via coalition projection matrix multiplication
-        # phi_chunk shape: (cur_nc, d)
         phi_chunk = v_table @ W
         phi_chunks.append(phi_chunk)
 
-    return np.vstack(phi_chunks)
+    phi_all = np.vstack(phi_chunks)
+    if zero_tol is not None:
+        phi_all[np.abs(phi_all) < zero_tol] = 0.0
+
+    return phi_all
 
 
 def mean_abs_shap(
     f: Callable[[np.ndarray], np.ndarray],
     X_explain: np.ndarray,
     X_background: np.ndarray,
+    n_explain: int = 100,
+    n_background: int = 50,
     max_d: int = 10,
     chunk_size: int = 8,
+    zero_tol: float = 1e-12,
 ) -> np.ndarray:
     """Compute mean absolute Shapley values per feature across instances.
+
+    Parameters:
+      f: callable mapping (N, d) array to (N,) array of predictions.
+      X_explain: array of instances to explain.
+      X_background: array of baseline/reference instances.
+      n_explain: maximum number of explain instances to evaluate (default 100).
+      n_background: maximum number of background instances to evaluate (default 50).
+      max_d: maximum allowed feature dimension (default 10).
+      chunk_size: chunk size for vectorization (default 8).
+      zero_tol: threshold below which attribution is set to exact 0.0.
 
     Returns:
       (d,) array containing (1 / N) * sum_i |phi_j(x_i)|.
     """
-    phi = exact_shap(f, X_explain, X_background, max_d=max_d, chunk_size=chunk_size)
+    X_exp = np.asarray(X_explain, dtype=np.float64)[:n_explain]
+    X_bg = np.asarray(X_background, dtype=np.float64)[:n_background]
+
+    phi = exact_shap(f, X_exp, X_bg, max_d=max_d, chunk_size=chunk_size, zero_tol=zero_tol)
     return np.mean(np.abs(phi), axis=0)
