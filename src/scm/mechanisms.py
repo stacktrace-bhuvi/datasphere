@@ -125,7 +125,8 @@ class Mechanism:
                 pval = parent_values[parent]
                 # If standardize is on and quadratic, center and scale quadratic activation
                 if self.standardize and nl == "quadratic":
-                    fn_val = (np.square(pval) - 1.0) / np.sqrt(2.0)
+                    clipped_p = np.clip(pval, -3.5, 3.5)
+                    fn_val = (np.square(clipped_p) - 1.0) / np.sqrt(2.0)
                 elif self.standardize and nl == "relu":
                     fn_val = (np.maximum(0.0, pval) - 0.3989) / 0.5826
                 else:

@@ -85,65 +85,122 @@ class SCM:
 
             if k == 0:
                 # Root node
+                n_scale = float(noise_scale * rng.uniform(0.8, 1.2))
                 mechanisms[node] = Mechanism(
                     node_name=node,
                     parents=[],
                     mechanism_type="linear",
                     bias=float(rng.normal(0.0, 0.3)),
-                    noise_model=node_noise,
+                    noise_model=NoiseModel(noise_type=noise_type, scale=n_scale),
                     standardize=standardize,
                     clip_bound=clip_bound,
                 )
             else:
                 signs = rng.choice([-1.0, 1.0], size=k)
-                mags = rng.uniform(0.5, 1.5, size=k)
-                weights = [float(s * m) for s, m in zip(signs, mags)]
+                mags = rng.uniform(0.5, 1.2 if standardize else 1.5, size=k)
+                raw_w = signs * mags
                 bias = float(rng.normal(0.0, 0.2))
 
                 is_nonlinear = rng.random() < nonlinearity_prob
                 has_interaction = (k >= 2) and (rng.random() < interaction_prob)
 
-                if has_interaction:
-                    p1, p2 = parents[0], parents[1]
-                    interaction_weight = float(rng.uniform(0.3, 0.8) * rng.choice([-1.0, 1.0]))
-                    nl_types = ["linear"] * k
-                    mechanisms[node] = Mechanism(
-                        node_name=node,
-                        parents=parents,
-                        mechanism_type="pairwise_interaction",
-                        weights=weights,
-                        bias=bias,
-                        nonlinearities=nl_types,
-                        interaction_weights={f"{p1}*{p2}": interaction_weight},
-                        noise_model=node_noise,
-                        standardize=standardize,
-                        clip_bound=clip_bound,
-                    )
-                elif is_nonlinear:
-                    nl_types = [str(rng.choice(nonlinear_options)) for _ in range(k)]
-                    mechanisms[node] = Mechanism(
-                        node_name=node,
-                        parents=parents,
-                        mechanism_type="nonlinear_additive",
-                        weights=weights,
-                        bias=bias,
-                        nonlinearities=nl_types,
-                        noise_model=node_noise,
-                        standardize=standardize,
-                        clip_bound=clip_bound,
-                    )
+                if standardize:
+                    # Noise scale adjusted to balance signal power: Var(signal) + Var(noise) ~ 1
+                    n_scale = float(noise_scale * rng.uniform(0.5, 0.7))
+                    node_noise = NoiseModel(noise_type=noise_type, scale=n_scale)
+
+                    if has_interaction:
+                        p1, p2 = parents[0], parents[1]
+                        raw_inter = float(rng.uniform(0.2, 0.4) * rng.choice([-1.0, 1.0]))
+                        norm = float(np.sqrt(np.sum(raw_w**2) + raw_inter**2))
+                        weights = [float((w / norm) * 0.75) for w in raw_w]
+                        inter_w = float((raw_inter / norm) * 0.35)
+                        mechanisms[node] = Mechanism(
+                            node_name=node,
+                            parents=parents,
+                            mechanism_type="pairwise_interaction",
+                            weights=weights,
+                            bias=bias,
+                            nonlinearities=["linear"] * k,
+                            interaction_weights={f"{p1}*{p2}": inter_w},
+                            noise_model=node_noise,
+                            standardize=standardize,
+                            clip_bound=clip_bound,
+                        )
+                    elif is_nonlinear:
+                        norm = float(np.sqrt(np.sum(raw_w**2)))
+                        weights = [float((w / norm) * 0.75) for w in raw_w]
+                        nl_types = [str(rng.choice(nonlinear_options)) for _ in range(k)]
+                        mechanisms[node] = Mechanism(
+                            node_name=node,
+                            parents=parents,
+                            mechanism_type="nonlinear_additive",
+                            weights=weights,
+                            bias=bias,
+                            nonlinearities=nl_types,
+                            noise_model=node_noise,
+                            standardize=standardize,
+                            clip_bound=clip_bound,
+                        )
+                    else:
+                        norm = float(np.sqrt(np.sum(raw_w**2)))
+                        weights = [float((w / norm) * 0.75) for w in raw_w]
+                        mechanisms[node] = Mechanism(
+                            node_name=node,
+                            parents=parents,
+                            mechanism_type="linear",
+                            weights=weights,
+                            bias=bias,
+                            nonlinearities=["linear"] * k,
+                            noise_model=node_noise,
+                            standardize=standardize,
+                            clip_bound=clip_bound,
+                        )
                 else:
-                    mechanisms[node] = Mechanism(
-                        node_name=node,
-                        parents=parents,
-                        mechanism_type="linear",
-                        weights=weights,
-                        bias=bias,
-                        nonlinearities=["linear"] * k,
-                        noise_model=node_noise,
-                        standardize=standardize,
-                        clip_bound=clip_bound,
-                    )
+                    n_scale = float(noise_scale * rng.uniform(0.8, 1.2))
+                    node_noise = NoiseModel(noise_type=noise_type, scale=n_scale)
+                    weights = [float(w) for w in raw_w]
+
+                    if has_interaction:
+                        p1, p2 = parents[0], parents[1]
+                        interaction_weight = float(rng.uniform(0.3, 0.8) * rng.choice([-1.0, 1.0]))
+                        mechanisms[node] = Mechanism(
+                            node_name=node,
+                            parents=parents,
+                            mechanism_type="pairwise_interaction",
+                            weights=weights,
+                            bias=bias,
+                            nonlinearities=["linear"] * k,
+                            interaction_weights={f"{p1}*{p2}": interaction_weight},
+                            noise_model=node_noise,
+                            standardize=standardize,
+                            clip_bound=clip_bound,
+                        )
+                    elif is_nonlinear:
+                        nl_types = [str(rng.choice(nonlinear_options)) for _ in range(k)]
+                        mechanisms[node] = Mechanism(
+                            node_name=node,
+                            parents=parents,
+                            mechanism_type="nonlinear_additive",
+                            weights=weights,
+                            bias=bias,
+                            nonlinearities=nl_types,
+                            noise_model=node_noise,
+                            standardize=standardize,
+                            clip_bound=clip_bound,
+                        )
+                    else:
+                        mechanisms[node] = Mechanism(
+                            node_name=node,
+                            parents=parents,
+                            mechanism_type="linear",
+                            weights=weights,
+                            bias=bias,
+                            nonlinearities=["linear"] * k,
+                            noise_model=node_noise,
+                            standardize=standardize,
+                            clip_bound=clip_bound,
+                        )
 
         metrics = compute_graph_metrics(G, d)
         n_nonlinear = sum(

@@ -51,6 +51,7 @@ def test_generate_benchmark_artifacts_and_schema():
             "clip_bound",
             "clipped_fraction_Y",
             "seed",
+            "attempts",
             "split",
         ]
         for col in required_cols:
@@ -95,6 +96,8 @@ def test_generate_benchmark_artifacts_and_schema():
                 meta = json.load(f)
             assert meta["scm_id"] == scm_id
             assert meta["n_samples"] == 500
+            assert "attempts" in meta
+            assert meta["attempts"] >= 1
 
             # 4. Inspect ground_truth.json
             with open(gt_path, "r", encoding="utf-8") as f:
@@ -117,3 +120,59 @@ def test_generate_benchmark_artifacts_and_schema():
         # 5. Test caching/resumption (force=False should skip)
         cached_df = generate_benchmark_from_config(test_config, out_dir, workers=1, force=False)
         assert len(cached_df) == 2
+
+
+def test_no_accepted_scm_exceeds_clipping_thresholds():
+    """Assert that across all graph families, no accepted SCM exceeds the clipping thresholds."""
+    config = {
+        "n_scms_per_family": 3,
+        "d_range": [5, 8],
+        "base_seed": 42,
+        "nonlinearity_prob": 0.6,
+        "interaction_prob": 0.3,
+        "noise_type": "gaussian",
+        "noise_scale": 1.0,
+        "n_samples": 1000,
+        "standardize": True,
+        "clip_bound": 10.0,
+        "families": [
+            "chain_mediation",
+            "confounded_fork",
+            "feature_collider",
+            "erdos_renyi_dag",
+            "layered",
+        ],
+    }
+
+    df = generate_benchmark_from_config(config, "dummy_path", workers=2, dry_run=True)
+    assert len(df) == 15
+    assert (df["clipped_fraction_Y"] <= 0.005).all(), "Accepted SCM exceeded clipped_fraction_Y > 0.5%"
+    assert (df["max_node_clip"] <= 0.01).all(), "Accepted SCM exceeded node clipped fraction > 1.0%"
+    assert (df["attempts"] >= 1).all()
+    assert (df["attempts"] <= 20).all()
+
+
+def test_resampling_triggers_on_excessive_clipping():
+    """Verify that if clipping threshold is violated, the generator resamples seeds and tracks attempts."""
+    from src.scm.generate import _generate_single_scm
+
+    spec = {
+        "scm_id": "test_resample_trigger",
+        "family": "layered",
+        "d": 6,
+        "seed": 42,
+        "split": "train",
+        "n_samples": 500,
+        "nonlinearity_prob": 0.5,
+        "noise_type": "gaussian",
+        "noise_scale": 1.0,
+        "interaction_prob": 0.2,
+        "standardize": True,
+        "clip_bound": 1.0,  # Tight bound intentionally forces clipping > 1%
+    }
+
+    with pytest.warns(UserWarning, match="reached max 20 attempts"):
+        res = _generate_single_scm((spec, Path("dummy"), False, True))
+
+    assert res["attempts"] == 20
+    assert res["seed"] == 42 + 19

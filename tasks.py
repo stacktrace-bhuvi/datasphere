@@ -9,6 +9,7 @@ Available commands:
     generate-small   Generate a small benchmark of 10 SCMs (sanity check)
     generate-full    Generate the full benchmark of 300 SCMs from configs/scm_default.yaml
     mock             Generate mock results (attributions, errors, observables) conforming to SCHEMAS.md
+    dry-run          Run generator in dry-run mode on full config without disk writes
 """
 
 from __future__ import annotations
@@ -85,12 +86,28 @@ def mock() -> int:
     ])
 
 
+def dry_run() -> int:
+    """Run generator in dry-run mode on full config without disk writes."""
+    cfg = ROOT_DIR / "configs" / "scm_default.yaml"
+    return run_command([
+        sys.executable,
+        "-m",
+        "src.scm.generate",
+        "--config",
+        str(cfg),
+        "--dry-run",
+        "--workers",
+        "4",
+    ])
+
+
 COMMANDS = {
     "install": install,
     "test": test,
     "generate-small": generate_small,
     "generate-full": generate_full,
     "mock": mock,
+    "dry-run": dry_run,
 }
 
 
