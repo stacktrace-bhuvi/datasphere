@@ -153,36 +153,36 @@ datasphere/
 
 3. Install required dependencies:
    ```bash
-   pip install --upgrade pip
-   pip install -r requirements.txt
+   python tasks.py install
    ```
 
-### Running the Pipeline
+### Task Runner and Pipeline Commands
 
-- **Generate synthetic SCMs and ground-truth effects:**
-  ```bash
-  python -m src.scm.generator --config configs/scm_generation.yaml --output-dir data/scms
-  ```
+The repository provides a cross-platform task runner [`tasks.py`](file:///c:/Users/Bhuvi/Desktop/sem5/ada/datasphere/tasks.py) (compatible with Windows PowerShell, Linux, and macOS without requiring `make`):
 
-- **Train predictive models and run explainers:**
+- **Install dependencies:**
   ```bash
-  python -m src.models.train --config configs/models.yaml --scms-dir data/scms
-  python -m src.explainers.run --config configs/explainers.yaml
-  ```
-
-- **Run 3-way error decomposition:**
-  ```bash
-  python -m src.metrics.decomposition --results-dir results/
-  ```
-
-- **Train and evaluate diagnostic meta-models (LOGFO):**
-  ```bash
-  python -m src.diagnostic.evaluation --eval-mode logfo
+  python tasks.py install
   ```
 
 - **Run test suite:**
   ```bash
-  pytest tests/ -v
+  python tasks.py test
+  ```
+
+- **Generate small sanity benchmark (10 SCMs):**
+  ```bash
+  python tasks.py generate-small
+  ```
+
+- **Generate full benchmark (100 SCMs):**
+  ```bash
+  python tasks.py generate-full
+  ```
+
+- **Run demonstrator script (Estimand Gap):**
+  ```bash
+  python -m src.scm.demo_estimand_gap
   ```
 
 ---

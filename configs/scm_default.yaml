@@ -1,0 +1,36 @@
+# Configuration for Structural Causal Model (SCM) generation
+# Project: Predicting Explanation Error Without Causal Ground Truth
+
+dataset_name: "scm_benchmark_v1"
+n_scms_per_family: 60
+d_range: [5, 10]
+n_samples: 2000
+base_seed: 42
+
+# Mechanism and noise configuration
+nonlinearity_prob: 0.5
+interaction_prob: 0.2
+noise_type: "gaussian"
+noise_scale: 1.0
+
+# Stabilization and bounding
+standardize: true
+clip_bound: 10.0
+
+# Supported graph families
+families:
+  - chain_mediation
+  - confounded_fork
+  - feature_collider
+  - erdos_renyi_dag
+  - layered
+
+# Graph-family-level train / heldout partition for generalization testing
+splits:
+  train_families:
+    - chain_mediation
+    - confounded_fork
+    - feature_collider
+    - erdos_renyi_dag
+  heldout_families:
+    - layered
