@@ -33,6 +33,7 @@ def _generate_single_scm(
     inter_prob = spec["interaction_prob"]
     standardize = spec["standardize"]
     clip_bound = spec["clip_bound"]
+    outcome_noise_scale = float(spec.get("outcome_noise_scale", 1.0))
 
     scm_dir = output_dir / scm_id
     data_path = scm_dir / "data.parquet"
@@ -92,6 +93,7 @@ def _generate_single_scm(
             interaction_prob=inter_prob,
             standardize=standardize,
             clip_bound=clip_bound,
+            outcome_noise_scale=outcome_noise_scale,
         )
         scm.metadata["scm_id"] = scm_id
         scm.metadata["split"] = split
@@ -188,6 +190,7 @@ def _generate_single_scm(
         "n_nonlinear": scm.metadata.get("n_nonlinear", 0),
         "noise_type": noise_type,
         "noise_scale": noise_scale,
+        "outcome_noise_scale": outcome_noise_scale,
         "has_confounding": scm.metadata.get("has_confounding", False),
         "mediation_share": scm.metadata.get("mediation_share", 0.0),
         "standardize": standardize,
@@ -242,6 +245,7 @@ def generate_benchmark_from_config(
     n_samples = int(config.get("n_samples", 2000))
     standardize = bool(config.get("standardize", True))
     clip_bound = float(config["clip_bound"]) if config.get("clip_bound") is not None else 10.0
+    outcome_noise_scale = float(config.get("outcome_noise_scale", 1.0))
 
     families = config.get("families", [
         "chain_mediation",
@@ -278,6 +282,7 @@ def generate_benchmark_from_config(
                 "interaction_prob": inter_prob,
                 "standardize": standardize,
                 "clip_bound": clip_bound,
+                "outcome_noise_scale": outcome_noise_scale,
             }
             specs.append(spec)
             global_idx += 1

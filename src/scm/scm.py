@@ -67,10 +67,21 @@ class SCM:
         interaction_prob: float = 0.0,
         standardize: bool = True,
         clip_bound: float | None = 10.0,
+        outcome_noise_scale: float = 1.0,
     ) -> SCM:
-        """Procedurally build an SCM with guaranteed invariants and variance preservation."""
+        """Procedurally build an SCM with guaranteed invariants and variance preservation.
+
+        ``outcome_noise_scale`` multiplies the exogenous noise of the sink node Y only.
+        With the default 1.0 the signal-to-noise ratio of Y is low (R^2 of the true
+        function f* is ~0.33 on average, because the 1/sqrt(k) parent scaling shrinks the
+        signal while the noise scale stays fixed). Values below 1 raise the SNR of the
+        outcome without changing the feature distributions, so model misfit and explainer
+        error are measured on a learnable target. Feature-node mechanisms are unaffected.
+        """
         G = generate_dag(family, d, seed)
         rng = np.random.default_rng(seed)
+        if outcome_noise_scale <= 0:
+            raise ValueError(f"outcome_noise_scale must be positive, got {outcome_noise_scale}")
 
         mechanisms: dict[str, Mechanism] = {}
         nonlinear_options = ["tanh", "sin", "quadratic", "relu"]
@@ -78,14 +89,17 @@ class SCM:
         for node in G.nodes:
             parents = sorted(list(G.predecessors(node)))
             k = len(parents)
+            # Y gets its own noise multiplier; feature nodes keep the base scale so that
+            # the observational distribution of X1..Xd is identical for any value of it.
+            node_scale = noise_scale * (outcome_noise_scale if node == "Y" else 1.0)
 
             # Node noise
-            n_scale = float(noise_scale * rng.uniform(0.8, 1.2))
+            n_scale = float(node_scale * rng.uniform(0.8, 1.2))
             node_noise = NoiseModel(noise_type=noise_type, scale=n_scale)
 
             if k == 0:
                 # Root node
-                n_scale = float(noise_scale * rng.uniform(0.8, 1.2))
+                n_scale = float(node_scale * rng.uniform(0.8, 1.2))
                 mechanisms[node] = Mechanism(
                     node_name=node,
                     parents=[],
@@ -106,7 +120,7 @@ class SCM:
 
                 if standardize:
                     # Noise scale adjusted to balance signal power: Var(signal) + Var(noise) ~ 1
-                    n_scale = float(noise_scale * rng.uniform(0.5, 0.7))
+                    n_scale = float(node_scale * rng.uniform(0.5, 0.7))
                     node_noise = NoiseModel(noise_type=noise_type, scale=n_scale)
 
                     if has_interaction:
@@ -157,7 +171,7 @@ class SCM:
                             clip_bound=clip_bound,
                         )
                 else:
-                    n_scale = float(noise_scale * rng.uniform(0.8, 1.2))
+                    n_scale = float(node_scale * rng.uniform(0.8, 1.2))
                     node_noise = NoiseModel(noise_type=noise_type, scale=n_scale)
                     weights = [float(w) for w in raw_w]
 
@@ -214,6 +228,7 @@ class SCM:
             "n_nonlinear": n_nonlinear,
             "noise_type": noise_type,
             "noise_scale": noise_scale,
+            "outcome_noise_scale": outcome_noise_scale,
             "has_confounding": metrics["has_confounding"],
             "mediation_share": metrics["mediation_share"],
             "standardize": standardize,

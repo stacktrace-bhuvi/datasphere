@@ -21,6 +21,23 @@ MODELS = ["xgboost", "mlp"]
 EXPLAINERS = ["treeshap", "kernelshap", "lime", "permutation"]
 SEEDS = [0, 1]
 
+# Observable columns (SCHEMAS.md section 4) with plausible ranges for mock data.
+MOCK_OBSERVABLE_RANGES = {
+    "max_abs_corr": (0.2, 0.9), "mean_abs_corr": (0.1, 0.5), "frac_corr_gt_0_3": (0.0, 0.8),
+    "max_vif": (1.2, 5.0), "mean_vif": (1.1, 2.5), "mutual_info_max": (0.2, 0.8), "mutual_info_mean": (0.1, 0.4),
+    "max_abs_corr_xy": (0.2, 0.9), "mean_abs_corr_xy": (0.1, 0.5), "mi_xy_max": (0.05, 0.6), "mi_xy_mean": (0.02, 0.3),
+    "test_mse": (0.1, 0.6), "test_r2": (0.3, 0.95), "val_mse": (0.1, 0.6), "train_r2": (0.4, 0.99),
+    "overfit_gap": (0.0, 0.3), "pred_var_ratio": (0.3, 1.1), "resid_kurtosis": (-0.5, 3.0), "model_agreement": (0.6, 0.99),
+    "attribution_gini": (0.2, 0.8), "top1_share": (0.2, 0.9), "effective_features": (1.0, 6.0),
+    "sign_consistency": (0.5, 1.0), "local_dispersion": (0.2, 2.0),
+    "seed_stability_rank": (0.5, 1.0), "seed_stability_l2": (0.0, 0.3),
+    "disagreement_rank_mean": (0.05, 0.6), "disagreement_l2_mean": (0.05, 0.4), "disagreement_topk_mean": (0.0, 0.6),
+    "disagreement_rank_vs_lime": (0.05, 0.6), "disagreement_l2_vs_lime": (0.05, 0.4),
+    "cross_model_disagreement_rank": (0.0, 1.0), "cross_model_disagreement_l2": (0.0, 0.4),
+    "perturb_stability_rank": (0.6, 1.0), "perturb_rel_change": (0.0, 0.3), "sensitivity": (0.1, 2.0),
+    "global_share_shift": (0.0, 0.05),
+}
+
 
 def make_mock_results(scms_dir: str | Path, results_dir: str | Path) -> None:
     """Generate mock results matching SCHEMAS.md for all SCMs in scms_dir."""
@@ -122,6 +139,14 @@ def make_mock_results(scms_dir: str | Path, results_dir: str | Path) -> None:
                         "estimand_gap": round(estimand_gap_val, 4),
                         "model_misfit": round(model_misfit_val, 4),
                         "explainer_error": round(explainer_err_val, 4),
+                        "total_error_share_l2": round(float(rng.uniform(0.1, 0.6)), 4),
+                        "estimand_gap_share": round(float(rng.uniform(0.1, 0.5)), 4),
+                        "model_misfit_share": round(float(rng.uniform(0.02, 0.2)), 4),
+                        "explainer_error_share": round(float(rng.uniform(0.0, 0.1)), 4),
+                        "estimand_gap_rank": round(float(rng.uniform(0.0, 0.6)), 4),
+                        "model_misfit_rank": round(float(rng.uniform(0.0, 0.4)), 4),
+                        "explainer_error_rank": round(float(rng.uniform(0.0, 0.2)), 4),
+                        "top_k_overlap": round(float(rng.uniform(0.3, 1.0)), 4),
                     })
 
                     # 3. Add to observables.csv
@@ -130,18 +155,9 @@ def make_mock_results(scms_dir: str | Path, results_dir: str | Path) -> None:
                         "model": model,
                         "explainer": explainer,
                         "seed": seed,
-                        "max_vif": round(float(rng.uniform(1.2, 5.0)), 3),
-                        "mean_vif": round(float(rng.uniform(1.1, 2.5)), 3),
-                        "mutual_info_max": round(float(rng.uniform(0.2, 0.8)), 3),
-                        "mutual_info_mean": round(float(rng.uniform(0.1, 0.4)), 3),
-                        "test_mse": round(float(rng.uniform(0.1, 0.6)), 3),
-                        "test_r2": round(float(rng.uniform(0.65, 0.95)), 3),
-                        "explainer_stability": round(float(rng.uniform(0.85, 0.99)), 3),
-                        "explainer_sensitivity": round(float(rng.uniform(0.05, 0.35)), 3),
-                        "prediction_concentration": round(float(rng.uniform(0.2, 0.6)), 3),
-                        "explainer_disagreement_rank": round(float(rng.uniform(0.05, 0.35)), 3),
-                        "explainer_disagreement_l2": round(float(rng.uniform(0.1, 0.4)), 3),
+                        **{k: round(float(rng.uniform(lo, hi)), 3) for k, (lo, hi) in MOCK_OBSERVABLE_RANGES.items()},
                         "n_train": 1200,
+                        "d": d,
                     })
 
     # Save CSVs

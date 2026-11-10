@@ -192,15 +192,11 @@ def test_validate_errors_and_observables_csv(populated_dataset_and_results):
     assert errors_csv.exists()
     errors_df = pd.read_csv(errors_csv)
 
-    expected_error_cols = [
-        "scm_id", "model", "explainer", "seed",
-        "total_error_l2", "total_error_rank",
-        "estimand_gap", "model_misfit", "explainer_error",
-    ]
-    assert list(errors_df.columns) == expected_error_cols
+    from src.metrics.pipeline_runner import ERROR_COLUMNS
+    assert list(errors_df.columns) == ERROR_COLUMNS
     assert len(errors_df) > 0
 
-    for col in ["total_error_l2", "total_error_rank", "estimand_gap", "model_misfit", "explainer_error"]:
+    for col in ERROR_COLUMNS[4:]:
         assert pd.api.types.is_float_dtype(errors_df[col])
 
     # 2. observables.csv validation
@@ -208,13 +204,11 @@ def test_validate_errors_and_observables_csv(populated_dataset_and_results):
     assert obs_csv.exists()
     obs_df = pd.read_csv(obs_csv)
 
-    expected_obs_cols = [
-        "scm_id", "model", "explainer", "seed",
-        "max_vif", "mean_vif", "mutual_info_max", "mutual_info_mean",
-        "test_mse", "test_r2", "explainer_stability", "explainer_sensitivity",
-        "prediction_concentration", "explainer_disagreement_rank",
-        "explainer_disagreement_l2", "n_train",
-    ]
+    from scripts.make_mock_results import MOCK_OBSERVABLE_RANGES
+    expected_obs_cols = ["scm_id", "model", "explainer", "seed", *MOCK_OBSERVABLE_RANGES, "n_train", "d"]
     assert list(obs_df.columns) == expected_obs_cols
+    for col in ["max_vif", "mean_vif", "mutual_info_max", "mutual_info_mean", "test_mse", "test_r2",
+                "seed_stability_rank", "perturb_stability_rank", "disagreement_rank_mean", "attribution_gini"]:
+        assert col in obs_df.columns, col
     assert len(obs_df) > 0
     assert (obs_df["n_train"] == 1200).all()

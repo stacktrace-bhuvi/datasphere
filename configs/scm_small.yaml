@@ -12,6 +12,9 @@ nonlinearity_prob: 0.5
 interaction_prob: 0.2
 noise_type: "gaussian"
 noise_scale: 1.0
+# Multiplier on the exogenous noise of Y only (features unchanged). 1.0 reproduces the
+# Review-1 pilot (R^2 of f* ~ 0.33); 0.4 raises the outcome SNR so models can fit f*.
+outcome_noise_scale: 0.4
 
 # Stabilization and bounding
 standardize: true

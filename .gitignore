@@ -23,3 +23,8 @@ results/
 .idea/
 .vscode/
 *.swp
+
+# Local runs
+results_small/
+results*/
+logs/

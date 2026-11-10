@@ -5,6 +5,8 @@ import pandas as pd
 
 REQUIRED = ["scm_id", "model", "explainer", "seed", "total_error_l2",
             "total_error_rank", "estimand_gap", "model_misfit", "explainer_error"]
+OPTIONAL = ["total_error_share_l2", "estimand_gap_share", "model_misfit_share",
+            "explainer_error_share", "top_k_overlap"]
 
 
 def summarize_errors(errors_csv: str | Path, output_dir: str | Path) -> dict[str, pd.DataFrame]:
@@ -16,7 +18,7 @@ def summarize_errors(errors_csv: str | Path, output_dir: str | Path) -> dict[str
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
     metrics = ["total_error_l2", "total_error_rank", "estimand_gap",
-               "model_misfit", "explainer_error"]
+               "model_misfit", "explainer_error"] + [c for c in OPTIONAL if c in data.columns]
 
     grouped = data.groupby(["model", "explainer"], dropna=False)[metrics].agg(["mean", "std"])
     grouped.columns = [f"{metric}_{stat}" for metric, stat in grouped.columns]

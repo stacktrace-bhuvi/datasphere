@@ -7,6 +7,8 @@ Writes:
 Usage:
   python scripts/run_attributions.py --scms-dir data/scms_small --results-dir results
   python scripts/run_attributions.py --models xgboost --explainers exact treeshap --seeds 0
+  python scripts/run_attributions.py --shard 0/2   # half the SCMs; run --shard 1/2 in parallel
+  (shards write models.shardK.csv; concatenate them into models.csv afterwards)
 """
 
 from __future__ import annotations
@@ -65,12 +67,18 @@ def main() -> None:
     p.add_argument("--explainers", nargs="+", default=list(EXPLAINER_NAMES))
     p.add_argument("--seeds", nargs="+", type=int, default=[0, 1, 2])
     p.add_argument("--limit", type=int, default=None, help="only the first N SCMs (quick checks)")
+    p.add_argument("--shard", default=None, help="k/n: process every n-th SCM starting at k (parallel runs)")
     p.add_argument("--force", action="store_true", help="recompute existing attribution files")
     a = p.parse_args()
 
     scms_dir, res_dir = Path(a.scms_dir), Path(a.results_dir)
     manifest = pd.read_csv(scms_dir / "manifest.csv")
     scm_ids = manifest["scm_id"].tolist()[: a.limit]
+    shard_suffix = ""
+    if a.shard:
+        k, n = (int(x) for x in a.shard.split("/"))
+        scm_ids = scm_ids[k::n]
+        shard_suffix = f".shard{k}"
     attr_dir = res_dir / "attributions"
 
     all_rows = []
@@ -80,7 +88,7 @@ def main() -> None:
         print(f"[{i}/{len(scm_ids)}] {scm_id} done in {time.perf_counter() - t0:.1f}s", flush=True)
 
     res_dir.mkdir(parents=True, exist_ok=True)
-    models_csv = res_dir / "models.csv"
+    models_csv = res_dir / f"models{shard_suffix}.csv"
     new = pd.DataFrame(all_rows)
     if models_csv.exists():
         old = pd.read_csv(models_csv)
