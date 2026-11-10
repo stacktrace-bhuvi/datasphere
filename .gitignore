@@ -28,3 +28,12 @@ results/
 results_small/
 results*/
 logs/
+
+# Deliverable scratch
+deliverables/*.zip
+deliverables/*.jpg
+deliverables/*.pdf
+report/*.jpg
+report/*.aux
+report/*.log
+report/*.out

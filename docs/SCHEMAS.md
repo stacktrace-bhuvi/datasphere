@@ -149,55 +149,72 @@ Naming convention:
 
 ## 3. Error Decomposition (`results/errors.csv`)
 
-Tracks total explanation error and the three orthogonal decomposition components per SCM, model, and explainer.
+Built by `python -m src.metrics.pipeline_runner` from `ground_truth.json` and the attribution sidecars. One row per SCM, model, explainer and seed. The fitted-model term $\Phi(f)$ is read from the `exact` sidecar of the same `(scm_id, model, seed)`, so stage 3 must have been run with the `exact` explainer included.
 
-### CSV Columns:
-1. `scm_id` (`string`): SCM identifier.
-2. `model` (`string`): `xgboost` or `mlp`.
-3. `explainer` (`string`): `treeshap`, `kernelshap`, `lime`, or `permutation`.
-4. `seed` (`int`): Model/explainer training seed.
-5. `total_error_l2` (`float`): Normalized L2 error between attribution vector and true total causal effect $\tau$:
-   $$\frac{\|\tau - \hat{E}\|_2}{\|\tau\|_2 + 10^{-12}}$$
-6. `total_error_rank` (`float`): $1.0 - \text{Kendall\_tau\_b}(\tau, \hat{E})$.
-7. `estimand_gap` (`float`): Inherent gap between exact oracle SHAP on $f^*$ and $\tau$:
-   $$\frac{\|\tau - \Phi(f^*)\|_2}{\|\tau\|_2 + 10^{-12}}$$
-8. `model_misfit` (`float`): Error due to model prediction error on $f^*$:
-   $$\frac{\|\Phi(f^*) - \Phi(f)\|_2}{\|\Phi(f^*)\|_2 + 10^{-12}}$$
-9. `explainer_error` (`float`): Approximation error of the explainer algorithm vs exact attribution on fitted model $f$:
-   $$\frac{\|\Phi(f) - \hat{E}\|_2}{\|\Phi(f)\|_2 + 10^{-12}}$$
+### CSV Columns
+
+| Column | Description |
+| :--- | :--- |
+| `scm_id`, `model`, `explainer`, `seed` | keys (`model` in `xgboost, mlp`; `explainer` in `exact, treeshap, kernelshap, lime, permutation`) |
+| `total_error_l2` | $\|\tau - \hat{E}\|_2 / (\|\tau\|_2 + 10^{-12})$ |
+| `total_error_rank` | $1 - \text{Kendall } \tau_b(\tau, \hat{E})$ |
+| `estimand_gap` | $\|\tau - \Phi(f^*)\|_2 / (\|\tau\|_2 + \epsilon)$ |
+| `model_misfit` | $\|\Phi(f^*) - \Phi(f)\|_2 / (\|\Phi(f^*)\|_2 + \epsilon)$ |
+| `explainer_error` | $\|\Phi(f) - \hat{E}\|_2 / (\|\Phi(f)\|_2 + \epsilon)$ |
+| `total_error_share_l2`, `estimand_gap_share`, `model_misfit_share`, `explainer_error_share` | the same four distances computed between **importance shares** $s(v) = |v| / \|v\|_1$ (scale-free; the headline magnitude metric) |
+| `estimand_gap_rank`, `model_misfit_rank`, `explainer_error_rank` | $1 - \text{Kendall } \tau_b$ between consecutive stages of the decomposition |
+| `top_k_overlap` | fraction of the top-$k$ causal features (k = #features with $\tau_j > 0$) recovered in the top-$k$ of $\hat{E}$ |
+
+Component norms are **not additive**: the feature-wise vectors telescope, their norms do not. For the global `permutation` explainer (MSE units) only the share and rank columns are meaningful.
 
 #### Worked Example Row:
 ```csv
-scm_id,model,explainer,seed,total_error_l2,total_error_rank,estimand_gap,model_misfit,explainer_error
-scm_0001_chain_mediation_d5,xgboost,treeshap,0,0.6912,0.3675,0.6845,0.0842,0.0121
+scm_id,model,explainer,seed,total_error_l2,total_error_rank,estimand_gap,model_misfit,explainer_error,total_error_share_l2,estimand_gap_share,model_misfit_share,explainer_error_share,estimand_gap_rank,model_misfit_rank,explainer_error_rank,top_k_overlap
+scm_0001_chain_mediation_d6,xgboost,kernelshap,0,0.5260,1.0,0.6690,0.2681,0.0070,0.3262,0.7011,0.3789,0.0067,0.3675,0.3675,0.0,1.0
 ```
 
 ---
 
 ## 4. Observable Features (`results/observables.csv`)
 
-Contains all diagnostic metrics observable **without causal ground truth**, computed solely from observational training data, fitted model behavior, and explainer perturbations.
+Built by `scripts/build_observables.py`. Every column is computable **without causal ground truth**: from the training split, the (deterministically re-trained) model, held-out labels, and the saved attributions. `ground_truth.json` is only read for the explain/background row indices. One row per SCM, model, explainer and seed.
 
-### CSV Columns:
-1. `scm_id` (`string`): SCM identifier.
-2. `model` (`string`): Model name (`xgboost` or `mlp`).
-3. `explainer` (`string`): Explainer name.
-4. `seed` (`int`): Random seed.
-5. `max_vif` (`float`): Maximum Variance Inflation Factor across all features.
-6. `mean_vif` (`float`): Average Variance Inflation Factor across features.
-7. `mutual_info_max` (`float`): Maximum pairwise mutual information between features.
-8. `mutual_info_mean` (`float`): Average pairwise mutual information among features.
-9. `test_mse` (`float`): Mean squared error of model $f$ on test split.
-10. `test_r2` (`float`): Coefficient of determination $R^2$ on test split.
-11. `explainer_stability` (`float`): Attribution stability under Gaussian input perturbation $\sigma_{\text{perturb}}=0.05$.
-12. `explainer_sensitivity` (`float`): Maximum attribution gradient / Lipshitz continuity estimator.
-13. `prediction_concentration` (`float`): Gini coefficient of feature attributions across instances.
-14. `explainer_disagreement_rank` (`float`): Kendall rank distance between target explainer and baseline LIME.
-15. `explainer_disagreement_l2` (`float`): Normalized L2 distance between target explainer and baseline LIME.
-16. `n_train` (`int`): Number of training samples ($1200$).
+### CSV Columns
 
-#### Worked Example Row:
-```csv
-scm_id,model,explainer,seed,max_vif,mean_vif,mutual_info_max,mutual_info_mean,test_mse,test_r2,explainer_stability,explainer_sensitivity,prediction_concentration,explainer_disagreement_rank,explainer_disagreement_l2,n_train
-scm_0001_chain_mediation_d5,xgboost,treeshap,0,3.412,1.824,0.482,0.194,0.241,0.865,0.941,0.182,0.345,0.185,0.224,1200
-```
+| Group | Column | Description |
+| :--- | :--- | :--- |
+| keys | `scm_id`, `model`, `explainer`, `seed` | |
+| data | `max_abs_corr`, `mean_abs_corr`, `frac_corr_gt_0_3` | pairwise \|Pearson r\| between features (train split) |
+| data | `max_vif`, `mean_vif` | variance inflation factors |
+| data | `mutual_info_max`, `mutual_info_mean` | pairwise mutual information (k-NN estimator, nats) |
+| data | `max_abs_corr_xy`, `mean_abs_corr_xy`, `mi_xy_max`, `mi_xy_mean` | feature–target association |
+| data | `n_train`, `d` | training rows, number of features |
+| model | `test_mse`, `test_r2`, `val_mse`, `train_r2`, `overfit_gap` | fit quality; `overfit_gap = train_r2 - test_r2` |
+| model | `pred_var_ratio` | Var(predictions on test) / Var(y test) |
+| model | `resid_kurtosis` | excess kurtosis of test residuals |
+| model | `model_agreement` | Pearson r between XGBoost and MLP predictions on test rows (same seed) |
+| explainer | `attribution_gini`, `top1_share`, `effective_features` | concentration of mean-\|attribution\| shares |
+| explainer | `sign_consistency` | share-weighted fraction of rows whose local sign matches the feature's majority sign |
+| explainer | `local_dispersion` | mean over features of std(local attr) / mean\|attr\| |
+| explainer | `seed_stability_rank`, `seed_stability_l2` | mean pairwise Kendall $\tau_b$ / share-$L_2$ between seeds of the same explainer (NaN if one seed) |
+| explainer | `disagreement_rank_mean`, `disagreement_l2_mean`, `disagreement_topk_mean` | mean disagreement with the other explainers run on the same model and seed |
+| explainer | `disagreement_rank_vs_lime`, `disagreement_l2_vs_lime` | disagreement with LIME as a fixed reference (LIME itself vs the mean of the others) |
+| explainer | `cross_model_disagreement_rank`, `cross_model_disagreement_l2` | same explainer and seed, XGBoost vs MLP |
+| explainer | `perturb_stability_rank`, `perturb_rel_change`, `global_share_shift` | attributions re-computed after Gaussian input perturbation ($\sigma = 0.05$ feature SDs); `exact` uses the first 20 explain rows |
+| explainer | `sensitivity` | $\max_i \|\Delta \text{attr}_i\| / \|\Delta x_i\|$ (Lipschitz estimate) |
+
+`src.diagnostic.dataset.observable_columns()` selects the diagnostic inputs automatically as every numeric column that is not a key, a target, or a structural column from the manifest (`family`, `split`, `has_confounding`, `mediation_share`, ...). One-hot indicators of `model` and `explainer` are appended.
+
+---
+
+## 5. Diagnostic Outputs (`results/tables/`, `results/figures/`, `results/diagnostic_summary.json`)
+
+| File | Content |
+| :--- | :--- |
+| `tables/diagnostic_scores.csv` | `target, protocol, method, fold, r2, spearman, mae, rmse, n, auroc_high_error`. `fold` is `pooled`, a CV fold index, a held-out family, or `by_method:<model>/<explainer>` |
+| `tables/diagnostic_predictions.csv` | out-of-sample prediction for every row under every method and protocol |
+| `tables/paired_tests.csv` | meta-model vs each baseline: paired cluster bootstrap over SCMs (MAE and Spearman gain with 95% CI and p) and Wilcoxon signed-rank p |
+| `tables/metric_bootstrap_ci.csv` | bootstrap CI of pooled Spearman and MAE per method and protocol |
+| `tables/feature_importance_<target>.csv` | permutation importance of observables (trained on train families, scored on the held-out family) |
+| `tables/error_summary_*.csv`, `estimand_gap_by_family.csv`, `error_by_family_explainer.csv` | descriptive tables |
+| `diagnostic_summary.json` | headline numbers used in the report |

@@ -20,6 +20,10 @@ FAMILY_LABEL = {"chain_mediation": "Chain", "confounded_fork": "Fork", "feature_
 EXPLAINER_ORDER = ["exact", "treeshap", "kernelshap", "lime", "permutation"]
 EXPLAINER_LABEL = {"exact": "Exact SHAP", "treeshap": "TreeSHAP", "kernelshap": "KernelSHAP",
                    "lime": "LIME", "permutation": "Permutation"}
+METHOD_LABEL = {"meta_gbm": "Meta-model (GBM)", "meta_rf": "Meta-model (RF)", "meta_ridge": "Meta-model (ridge)",
+                "baseline_constant": "Constant", "baseline_correlation_only": "Correlation only",
+                "baseline_max_vif": "Max VIF", "baseline_test_error": "Test error", "baseline_sample_size": "Sample size",
+                "baseline_disagreement_only": "Disagreement only", "baseline_stability_only": "Stability only"}
 
 plt.rcParams.update({
     "font.size": 9, "axes.titlesize": 10, "axes.labelsize": 9, "legend.fontsize": 8,
@@ -56,11 +60,11 @@ def fig_error_decomposition(errors: pd.DataFrame, out_dir: Path, space: str = "s
             ax.bar(x + (i - 1) * w, means[c], width=w * 0.92, color=PALETTE[i], label=lab)
         ax.set_xticks(x)
         ax.set_xticklabels([EXPLAINER_LABEL[e] for e in exps], rotation=20, ha="right")
-        ax.set_title(f"{m}")
+        ax.set_title({"mlp": "MLP", "xgboost": "XGBoost"}.get(m, m))
         ax.grid(axis="x", visible=False)
     axes[0].set_ylabel("L2 distance between importance shares" if space == "share" else "normalized L2")
     handles, labels_ = axes[0].get_legend_handles_labels()
-    fig.legend(handles, labels_, frameon=False, ncol=3, loc="lower center", bbox_to_anchor=(0.5, -0.12))
+    fig.legend(handles, labels_, frameon=False, ncol=3, loc="lower center", bbox_to_anchor=(0.5, -0.3))
     fig.suptitle("Where explanation error comes from (mean over SCMs and seeds)", y=1.02)
     return _save(fig, out_dir, f"fig_error_decomposition_{space}")
 
@@ -71,8 +75,8 @@ def fig_estimand_gap_by_family(errors: pd.DataFrame, out_dir: Path) -> list[Path
     fams = [f for f in FAMILY_ORDER if f in per_scm["family"].unique()]
     fig, axes = plt.subplots(1, 2, figsize=(6.8, 2.6))
     for ax, col, ttl in zip(axes, ["estimand_gap_rank", "estimand_gap_share"],
-                            ["Rank error: 1 - Kendall tau-b(tau, exact SHAP of f*)",
-                             "Share error: ||share(tau) - share(exact SHAP of f*)||"]):
+                            ["Rank gap: 1 - Kendall tau-b(tau, SHAP of f*)",
+                             "Share gap: ||share(tau) - share(SHAP of f*)||"]):
         data = [per_scm.loc[per_scm["family"] == f, col].to_numpy() for f in fams]
         bp = ax.boxplot(data, widths=0.55, patch_artist=True, showfliers=False, medianprops={"color": "#0b0b0b"})
         for patch, f in zip(bp["boxes"], fams):
@@ -122,12 +126,14 @@ def fig_logfo_performance(scores: pd.DataFrame, out_dir: Path, target: str, metr
     w = 0.8 / max(len(methods), 1)
     for i, m in enumerate(methods):
         vals = [s[(s["method"] == m) & (s["fold"] == f)][metric].mean() for f in fams]
-        ax.bar(x + (i - (len(methods) - 1) / 2) * w, vals, width=w * 0.92, color=PALETTE[i % len(PALETTE)], label=m)
+        ax.bar(x + (i - (len(methods) - 1) / 2) * w, vals, width=w * 0.92, color=PALETTE[i % len(PALETTE)],
+               label=METHOD_LABEL.get(m, m))
     ax.axhline(0, color="#0b0b0b", linewidth=0.8)
     ax.set_xticks(x)
     ax.set_xticklabels([FAMILY_LABEL[f] for f in fams])
     ax.set_ylabel({"spearman": "Spearman(pred, actual)", "r2": "R^2", "auroc_high_error": "AUROC (high error)"}.get(metric, metric))
-    ax.set_title(f"Leave-one-graph-family-out: predicting {target}")
+    ax.set_title("Leave-one-graph-family-out: predicting " + {"total_error_rank": "rank error (1 - Kendall tau-b vs tau)",
+                                                               "total_error_share_l2": "share error"}.get(target, target))
     ax.legend(frameon=False, ncol=min(4, len(methods)), fontsize=7, loc="upper left", bbox_to_anchor=(0, -0.22))
     ax.grid(axis="x", visible=False)
     return _save(fig, out_dir, f"fig_logfo_{metric}_{target}")
@@ -146,7 +152,7 @@ def fig_pred_vs_actual(preds: pd.DataFrame, out_dir: Path, target: str, method: 
     ax.plot([lo, hi], [lo, hi], color="#0b0b0b", linewidth=0.8, linestyle="--")
     ax.set_xlabel(f"actual {target}")
     ax.set_ylabel("predicted")
-    ax.set_title(f"{method} under {protocol}", fontsize=9)
+    ax.set_title(f"{METHOD_LABEL.get(method, method)}, {'held-out layered family' if protocol == 'designated_split' else protocol}", fontsize=9)
     ax.legend(frameon=False, fontsize=6.5, markerscale=1.5)
     return _save(fig, out_dir, f"fig_pred_vs_actual_{protocol}_{method}_{target}")
 
@@ -183,3 +189,36 @@ def fig_observable_scatter(df: pd.DataFrame, out_dir: Path, target: str, observa
     axes.ravel()[0].legend(frameon=False, fontsize=6, markerscale=1.5)
     fig.tight_layout()
     return _save(fig, out_dir, f"fig_observables_vs_{target}")
+
+
+TARGET_LABEL = {"explainer_error_share": "Explainer error", "model_misfit_share": "Model misfit",
+                "estimand_gap_share": "Estimand gap", "total_error_share_l2": "Total (share)",
+                "total_error_rank": "Total (rank)"}
+
+
+def fig_component_predictability(scores: pd.DataFrame, out_dir: Path, protocol: str = "logfo",
+                                 methods: list[str] | None = None, metric: str = "spearman") -> list[Path]:
+    """Pooled out-of-sample metric per TARGET (error component) and method: which part of the error is predictable?"""
+    targets = [t for t in TARGET_LABEL if t in scores["target"].unique()]
+    methods = methods or ["meta_gbm", "baseline_test_error", "baseline_disagreement_only", "baseline_stability_only"]
+    s = scores[(scores["protocol"] == protocol) & (scores["fold"] == "pooled")]
+    fig, ax = plt.subplots(figsize=(6.8, 2.8))
+    x = np.arange(len(targets))
+    w = 0.8 / len(methods)
+    for i, m in enumerate(methods):
+        vals = [s[(s["method"] == m) & (s["target"] == t)][metric].mean() for t in targets]
+        bars = ax.bar(x + (i - (len(methods) - 1) / 2) * w, vals, width=w * 0.92, color=PALETTE[i % len(PALETTE)],
+                      label=METHOD_LABEL.get(m, m))
+        if m == "meta_gbm":
+            for b, v in zip(bars, vals):
+                ax.text(b.get_x() + b.get_width() / 2, v + 0.015, f"{v:.2f}", ha="center", va="bottom", fontsize=7.5)
+    ax.axhline(0, color="#0b0b0b", linewidth=0.8)
+    ax.set_xticks(x)
+    ax.set_xticklabels([TARGET_LABEL[t] for t in targets])
+    ax.set_ylabel({"spearman": "Spearman(pred, actual)", "r2": "R^2"}.get(metric, metric))
+    ax.set_ylim(min(-0.05, ax.get_ylim()[0]), 1.0)
+    ax.set_title({"logfo": "Leave-one-graph-family-out, pooled", "grouped_cv": "Grouped CV, pooled",
+                  "designated_split": "Held-out layered family"}.get(protocol, protocol) + ": which part of the error is predictable?")
+    ax.legend(frameon=False, ncol=4, fontsize=7, loc="upper left", bbox_to_anchor=(0, -0.12))
+    ax.grid(axis="x", visible=False)
+    return _save(fig, out_dir, f"fig_component_predictability_{protocol}_{metric}")

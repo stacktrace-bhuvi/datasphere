@@ -1,0 +1,208 @@
+\newcommand{\TableDecomposition}{%
+\begin{table}[t]
+\caption{Error decomposition, mean over SCMs and seeds. Share: $L_2$ distance between importance shares. Rank: $1-$Kendall $\tau_b$. Top-$k$: fraction of causal drivers recovered.}
+\label{tab:decomp}
+\centering\footnotesize
+\setlength{\tabcolsep}{2pt}
+\begin{tabular}{llcccccc}
+\toprule
+& & \multicolumn{4}{c}{Share space} & Rank & Top-$k$ \\
+\cmidrule(lr){3-6}
+Model & Explainer & Gap & Misfit & Expl. & Total & Total & \\
+\midrule
+XGBoost & Exact SHAP & 0.31 & 0.09 & 0.00 & 0.26 & 0.43 & 0.90 \\
+XGBoost & TreeSHAP & 0.31 & 0.09 & 0.00 & 0.26 & 0.43 & 0.90 \\
+XGBoost & KernelSHAP & 0.31 & 0.09 & 0.00 & 0.26 & 0.43 & 0.89 \\
+XGBoost & LIME & 0.31 & 0.09 & 0.05 & 0.28 & 0.44 & 0.89 \\
+XGBoost & Permutation & 0.31 & 0.09 & 0.15 & 0.35 & 0.43 & 0.90 \\
+\midrule
+MLP & Exact SHAP & 0.31 & 0.14 & 0.00 & 0.23 & 0.43 & 0.91 \\
+ & KernelSHAP & 0.31 & 0.14 & 0.01 & 0.23 & 0.42 & 0.91 \\
+ & LIME & 0.31 & 0.14 & 0.07 & 0.27 & 0.45 & 0.89 \\
+ & Permutation & 0.31 & 0.14 & 0.17 & 0.32 & 0.43 & 0.90 \\
+\bottomrule
+\end{tabular}
+\end{table}}
+\newcommand{\TableGapByFamily}{%
+\begin{table}[t]
+\caption{Estimand gap per graph family (perfect model, exact SHAP), mean $\pm$ sd over SCMs, and total rank error of KernelSHAP and LIME on fitted models. $^\dagger$held-out family.}
+\label{tab:gap}
+\centering\footnotesize
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{lcccc}
+\toprule
+Family & Gap (rank) & Gap (share) & KernelSHAP & LIME \\
+\midrule
+Chain & 0.37 $\pm$ 0.10 & 0.41 $\pm$ 0.19 & 0.52 & 0.51 \\
+Fork & 0.34 $\pm$ 0.22 & 0.19 $\pm$ 0.08 & 0.39 & 0.41 \\
+Collider & 0.34 $\pm$ 0.11 & 0.36 $\pm$ 0.13 & 0.44 & 0.48 \\
+Random DAG & 0.26 $\pm$ 0.12 & 0.26 $\pm$ 0.15 & 0.36 & 0.38 \\
+Layered$^\dagger$ & 0.38 $\pm$ 0.20 & 0.32 $\pm$ 0.15 & 0.43 & 0.47 \\
+\bottomrule
+\end{tabular}
+\end{table}}
+\newcommand{\TableDiagnosticRank}{%
+\begin{table*}[t]
+\caption{Predicting the rank error ($1-\tau_b$) of an explanation from observables. Pooled out-of-sample Spearman $\rho$ (predicted vs actual), $R^2$ and AUROC for flagging explanations above the training median, under three protocols.}
+\label{tab:diag_rank}
+\centering\small
+\setlength{\tabcolsep}{6pt}
+\begin{tabular}{lccccccccc}
+\toprule
+& \multicolumn{3}{c}{Grouped CV} & \multicolumn{3}{c}{LOGFO} & \multicolumn{3}{c}{Held-out layered} \\
+\cmidrule(lr){2-4}\cmidrule(lr){5-7}\cmidrule(lr){8-10}
+Method & $\rho$ & $R^2$ & AUC & $\rho$ & $R^2$ & AUC & $\rho$ & $R^2$ & AUC \\
+\midrule
+\textbf{Meta: GBM} & 0.34 & 0.12 & 0.67 & 0.22 & 0.02 & 0.61 & 0.20 & -0.01 & 0.59 \\
+Meta: RF & 0.31 & 0.09 & 0.65 & 0.20 & 0.02 & 0.61 & 0.20 & -0.04 & 0.60 \\
+Meta: ridge & 0.33 & 0.12 & 0.66 & 0.23 & 0.02 & 0.62 & 0.20 & -0.02 & 0.61 \\
+\midrule
+Constant & -0.11 & -0.01 & 0.44 & -0.24 & -0.03 & 0.40 & 0.00 & 0.00 & 0.50 \\
+Correlation only & 0.01 & -0.01 & 0.51 & -0.21 & -0.06 & 0.41 & -0.20 & -0.08 & 0.40 \\
+Max VIF & -0.11 & -0.01 & 0.44 & -0.25 & -0.05 & 0.38 & -0.14 & -0.01 & 0.43 \\
+Test error & 0.07 & 0.00 & 0.54 & -0.06 & -0.05 & 0.48 & 0.02 & 0.00 & 0.48 \\
+Sample size & 0.07 & 0.00 & 0.54 & -0.05 & -0.03 & 0.49 & 0.16 & 0.02 & 0.61 \\
+Disagreement only & 0.22 & 0.06 & 0.60 & 0.18 & 0.03 & 0.59 & 0.14 & 0.02 & 0.57 \\
+Stability only & 0.19 & 0.04 & 0.60 & 0.15 & 0.02 & 0.58 & 0.17 & 0.03 & 0.59 \\
+\bottomrule
+\end{tabular}
+\end{table*}}
+\newcommand{\TableDiagnosticShare}{%
+\begin{table*}[t]
+\caption{Predicting the share error of an explanation from observables. Pooled out-of-sample Spearman $\rho$ (predicted vs actual), $R^2$ and AUROC for flagging explanations above the training median, under three protocols.}
+\label{tab:diag_share}
+\centering\small
+\setlength{\tabcolsep}{6pt}
+\begin{tabular}{lccccccccc}
+\toprule
+& \multicolumn{3}{c}{Grouped CV} & \multicolumn{3}{c}{LOGFO} & \multicolumn{3}{c}{Held-out layered} \\
+\cmidrule(lr){2-4}\cmidrule(lr){5-7}\cmidrule(lr){8-10}
+Method & $\rho$ & $R^2$ & AUC & $\rho$ & $R^2$ & AUC & $\rho$ & $R^2$ & AUC \\
+\midrule
+\textbf{Meta: GBM} & 0.65 & 0.53 & 0.82 & 0.52 & 0.32 & 0.76 & 0.48 & 0.10 & 0.75 \\
+Meta: RF & 0.67 & 0.56 & 0.83 & 0.54 & 0.38 & 0.76 & 0.45 & 0.12 & 0.74 \\
+Meta: ridge & 0.59 & 0.47 & 0.78 & 0.47 & 0.22 & 0.71 & 0.48 & 0.17 & 0.67 \\
+\midrule
+Constant & -0.06 & 0.00 & 0.47 & -0.35 & -0.07 & 0.34 & 0.00 & -0.01 & 0.50 \\
+Correlation only & 0.05 & 0.00 & 0.52 & -0.23 & -0.27 & 0.39 & 0.11 & -0.02 & 0.54 \\
+Max VIF & 0.04 & 0.00 & 0.52 & -0.29 & -0.09 & 0.36 & -0.13 & -0.04 & 0.42 \\
+Test error & 0.40 & 0.18 & 0.70 & 0.36 & 0.13 & 0.67 & 0.46 & 0.21 & 0.72 \\
+Sample size & 0.19 & 0.05 & 0.59 & 0.07 & -0.03 & 0.53 & 0.07 & -0.06 & 0.53 \\
+Disagreement only & 0.34 & 0.14 & 0.66 & 0.23 & 0.07 & 0.61 & 0.38 & 0.14 & 0.67 \\
+Stability only & 0.23 & 0.08 & 0.60 & 0.12 & 0.03 & 0.54 & 0.25 & 0.07 & 0.59 \\
+\bottomrule
+\end{tabular}
+\end{table*}}
+\newcommand{\TableLogfoFamily}{%
+\begin{table}[t]
+\caption{LOGFO, share-error target: Spearman $\rho$ (AUROC in parentheses) on each held-out family. Each column is a model trained on the other four families.}
+\label{tab:logfo}
+\centering\scriptsize
+\setlength{\tabcolsep}{2.5pt}
+\begin{tabular}{lccccc}
+\toprule
+Method & Chain & Fork & Collider & Random & Layered \\
+\midrule
+Meta: GBM & 0.72 (0.84) & 0.29 (0.69) & 0.81 (0.88) & 0.42 (0.77) & 0.48 (0.75) \\
+Meta: RF & 0.78 (0.88) & 0.32 (0.70) & 0.83 (0.89) & 0.42 (0.77) & 0.45 (0.74) \\
+Meta: ridge & 0.70 (0.86) & 0.25 (0.66) & 0.79 (0.85) & 0.31 (0.71) & 0.48 (0.67) \\
+\midrule
+Constant & 0.00 (0.50) & 0.00 (0.50) & 0.00 (0.50) & 0.00 (0.50) & 0.00 (0.50) \\
+Correlation only & 0.36 (0.66) & 0.12 (0.55) & 0.37 (0.63) & -0.01 (0.53) & 0.10 (0.54) \\
+Max VIF & 0.00 (0.49) & -0.03 (0.49) & 0.00 (0.49) & -0.13 (0.43) & -0.13 (0.42) \\
+Test error & 0.32 (0.61) & 0.19 (0.65) & 0.71 (0.82) & 0.12 (0.58) & 0.46 (0.72) \\
+Sample size & 0.41 (0.68) & 0.16 (0.58) & 0.48 (0.68) & 0.06 (0.53) & 0.07 (0.53) \\
+Disagreement only & 0.27 (0.68) & 0.01 (0.50) & 0.31 (0.64) & 0.26 (0.65) & 0.38 (0.67) \\
+Stability only & 0.21 (0.61) & -0.09 (0.42) & 0.16 (0.57) & 0.17 (0.62) & 0.25 (0.59) \\
+\bottomrule
+\end{tabular}
+\end{table}}
+\newcommand{\TablePairedTests}{%
+\begin{table}[t]
+\caption{Gain of the GBM meta-model over each baseline (share-error target). Paired cluster bootstrap over SCMs (2000 resamples): mean gain in Spearman $\rho$ and in MAE with 95\% CI; Wilcoxon signed-rank $p$ on per-SCM absolute errors; share of SCMs on which the meta-model has the lower error.}
+\label{tab:tests}
+\centering\footnotesize
+\setlength{\tabcolsep}{2.5pt}
+\begin{tabular}{llcccc}
+\toprule
+Protocol & vs.\ & $\Delta\rho$ [95\% CI] & $\Delta$MAE [95\% CI] & $p_{W}$ & better \\
+\midrule
+LOGFO & Constant & 0.87 [0.74, 1.00] & 0.033 [0.024, 0.042] & $<$0.001 & 69\% \\
+ & Correlation only & 0.75 [0.63, 0.86] & 0.043 [0.035, 0.052] & $<$0.001 & 73\% \\
+ & Max VIF & 0.81 [0.68, 0.94] & 0.034 [0.025, 0.043] & $<$0.001 & 70\% \\
+ & Test error & 0.17 [0.08, 0.25] & 0.019 [0.013, 0.026] & $<$0.001 & 65\% \\
+ & Sample size & 0.45 [0.34, 0.57] & 0.030 [0.022, 0.038] & $<$0.001 & 70\% \\
+ & Disagreement only & 0.29 [0.20, 0.39] & 0.024 [0.016, 0.031] & $<$0.001 & 69\% \\
+ & Stability only & 0.41 [0.31, 0.50] & 0.027 [0.019, 0.035] & $<$0.001 & 73\% \\
+\midrule
+Layered & Constant & 0.48 [0.22, 0.71] & 0.017 [0.001, 0.035] & 0.050 & 60\% \\
+ & Correlation only & 0.37 [0.07, 0.65] & 0.016 [0.000, 0.034] & 0.042 & 60\% \\
+ & Max VIF & 0.61 [0.22, 0.95] & 0.019 [0.003, 0.037] & 0.018 & 62\% \\
+ & Test error & 0.02 [-0.28, 0.28] & 0.004 [-0.015, 0.020] & 0.622 & 50\% \\
+ & Sample size & 0.41 [0.04, 0.77] & 0.018 [-0.002, 0.038] & 0.092 & 52\% \\
+ & Disagreement only & 0.10 [-0.20, 0.36] & 0.009 [-0.006, 0.023] & 0.119 & 58\% \\
+ & Stability only & 0.24 [-0.05, 0.50] & 0.013 [-0.001, 0.028] & 0.022 & 65\% \\
+\bottomrule
+\end{tabular}
+\end{table}}
+\newcommand{\TableFeatureImportance}{%
+\begin{table}[t]
+\caption{Permutation importance of observables in the GBM meta-model: drop in $R^2$ on the held-out layered family when the column is shuffled (mean $\pm$ sd over 10 repeats).}
+\label{tab:fi}
+\centering\small
+\begin{tabular}{lc}
+\toprule
+Observable & $\Delta R^2$ \\
+\midrule
+\texttt{mean\_abs\_corr\_xy} & 0.188 $\pm$ 0.022 \\
+\texttt{attribution\_gini} & 0.131 $\pm$ 0.011 \\
+\texttt{mi\_xy\_mean} & 0.053 $\pm$ 0.005 \\
+\texttt{mi\_xy\_max} & 0.017 $\pm$ 0.004 \\
+\texttt{disagreement\_l2\_mean} & 0.014 $\pm$ 0.002 \\
+\texttt{disagreement\_l2\_vs\_lime} & 0.007 $\pm$ 0.001 \\
+\texttt{train\_r2} & 0.006 $\pm$ 0.001 \\
+\texttt{mutual\_info\_max} & 0.004 $\pm$ 0.002 \\
+\texttt{sensitivity} & 0.004 $\pm$ 0.001 \\
+\texttt{local\_dispersion} & 0.003 $\pm$ 0.001 \\
+\bottomrule
+\end{tabular}
+\end{table}}
+\newcommand{\TableByMethod}{%
+\begin{table}[t]
+\caption{Stricter test: Spearman $\rho$ between predicted and actual share error \emph{within} each (model, explainer) subset under LOGFO, i.e.\ ranking SCMs for a fixed explanation method.}
+\label{tab:bymethod}
+\centering\small
+\begin{tabular}{lcc}
+\toprule
+Subset & Meta: GBM & Test error \\
+\midrule
+mlp/exact & 0.45 & 0.38 \\
+mlp/kernelshap & 0.45 & 0.38 \\
+mlp/lime & 0.45 & 0.27 \\
+mlp/permutation & 0.53 & 0.44 \\
+xgboost/exact & 0.47 & 0.39 \\
+xgboost/kernelshap & 0.47 & 0.39 \\
+xgboost/lime & 0.47 & 0.30 \\
+xgboost/permutation & 0.55 & 0.47 \\
+xgboost/treeshap & 0.47 & 0.39 \\
+\bottomrule
+\end{tabular}
+\end{table}}
+\newcommand{\TableComponents}{%
+\begin{table}[t]
+\caption{Which part of the error is predictable? Pooled LOGFO Spearman $\rho$ ($R^2$ in parentheses) when each component of~\eqref{eq:decomp}, and the two totals, is the target.}
+\label{tab:components}
+\centering\footnotesize
+\setlength{\tabcolsep}{2.5pt}
+\begin{tabular}{lccccc}
+\toprule
+Target & Meta: GBM & Test error & Disagreement & Stability & Max VIF \\
+\midrule
+Explainer error & 0.91 (0.98) & 0.03 (0.00) & 0.65 (0.78) & 0.33 (0.05) & -0.01 (0.00) \\
+Model misfit & 0.70 (0.59) & 0.15 (0.02) & 0.37 (0.12) & 0.44 (0.25) & -0.16 (-0.04) \\
+Estimand gap & 0.34 (0.11) & 0.34 (0.11) & 0.16 (0.02) & 0.13 (0.01) & -0.37 (-0.14) \\
+Total (share) & 0.52 (0.32) & 0.36 (0.13) & 0.23 (0.07) & 0.12 (0.03) & -0.29 (-0.09) \\
+Total (rank) & 0.22 (0.02) & -0.06 (-0.05) & 0.18 (0.03) & 0.15 (0.02) & -0.25 (-0.05) \\
+\bottomrule
+\end{tabular}
+\end{table}}

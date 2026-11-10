@@ -9,7 +9,8 @@ from .error_metrics import (
     top_k_overlap,
 )
 from .decomposition import decompose_error
-from .pipeline_runner import ERROR_COLUMNS, build_error_table
+# build_error_table / ERROR_COLUMNS live in src.metrics.pipeline_runner (imported lazily so that
+# `python -m src.metrics.pipeline_runner` does not trigger a double-import warning).
 
 __all__ = [
     "causal_alignment_metrics",
@@ -19,6 +20,4 @@ __all__ = [
     "share_l2",
     "top_k_overlap",
     "decompose_error",
-    "ERROR_COLUMNS",
-    "build_error_table",
 ]

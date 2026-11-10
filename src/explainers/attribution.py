@@ -97,11 +97,15 @@ def _treeshap(model, X_exp, X_bg, seed, cfg, **_):
 
 
 def _kernelshap(model, X_exp, X_bg, seed, cfg, **_):
+    import warnings
     import shap
+    from sklearn.exceptions import ConvergenceWarning
     np.random.seed(seed)  # KernelExplainer samples coalitions with the global numpy RNG
     ex = shap.KernelExplainer(model.predict, X_bg, silent=True) if _kernel_has_silent() \
         else shap.KernelExplainer(model.predict, X_bg)
-    phi = ex.shap_values(X_exp, nsamples=kernel_budget(X_exp.shape[1], cfg["nsamples"]), silent=True)
+    with warnings.catch_warnings():  # KernelSHAP's l1_reg LARS path warns on degenerate coalitions
+        warnings.simplefilter("ignore", ConvergenceWarning)
+        phi = ex.shap_values(X_exp, nsamples=kernel_budget(X_exp.shape[1], cfg["nsamples"]), silent=True)
     return np.asarray(phi), np.full(len(X_exp), float(np.ravel(ex.expected_value)[0])), False
 
 
@@ -119,7 +123,9 @@ def _kernel_has_silent() -> bool:
 
 
 def _lime(model, X_exp, X_bg, seed, cfg, X_train=None, **_):
+    import warnings
     from lime.lime_tabular import LimeTabularExplainer
+    from sklearn.exceptions import ConvergenceWarning
     if X_train is None:
         raise ValueError("LIME needs X_train (it samples perturbations from training statistics)")
     d = X_exp.shape[1]
@@ -129,7 +135,9 @@ def _lime(model, X_exp, X_bg, seed, cfg, X_train=None, **_):
     mean, scale = ex.scaler.mean_, ex.scaler.scale_
     vals, base = np.zeros_like(X_exp), np.zeros(len(X_exp))
     for i, x in enumerate(X_exp):
-        e = ex.explain_instance(x, model.predict, num_features=d, num_samples=cfg["num_samples"])
+        with warnings.catch_warnings():  # LARS path inside LIME warns on degenerate regressors
+            warnings.simplefilter("ignore", ConvergenceWarning)
+            e = ex.explain_instance(x, model.predict, num_features=d, num_samples=cfg["num_samples"])
         coef = np.zeros(d)
         for j, w in e.local_exp[1]:
             coef[int(j)] = w

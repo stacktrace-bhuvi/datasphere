@@ -81,19 +81,24 @@ def main() -> None:
         shard_suffix = f".shard{k}"
     attr_dir = res_dir / "attributions"
 
-    all_rows = []
-    for i, scm_id in enumerate(scm_ids, 1):
-        t0 = time.perf_counter()
-        all_rows += run_scm(scms_dir / scm_id, attr_dir, a.models, a.explainers, a.seeds, a.force)
-        print(f"[{i}/{len(scm_ids)}] {scm_id} done in {time.perf_counter() - t0:.1f}s", flush=True)
-
     res_dir.mkdir(parents=True, exist_ok=True)
     models_csv = res_dir / f"models{shard_suffix}.csv"
-    new = pd.DataFrame(all_rows)
-    if models_csv.exists():
-        old = pd.read_csv(models_csv)
-        new = pd.concat([old, new]).drop_duplicates(["scm_id", "model", "seed"], keep="last")
-    new.sort_values(["scm_id", "model", "seed"]).to_csv(models_csv, index=False)
+    rows = pd.read_csv(models_csv).to_dict("records") if models_csv.exists() else []
+    done = {(r["scm_id"], r["model"], int(r["seed"])) for r in rows}
+
+    for i, scm_id in enumerate(scm_ids, 1):
+        t0 = time.perf_counter()
+        attr_done = all((attr_dir / f"{scm_id}__{m}__{e}__seed{s}.parquet").exists()
+                        for m in a.models for e in a.explainers for s in a.seeds
+                        if not (e == "treeshap" and m != "xgboost"))
+        if attr_done and not a.force and all((scm_id, m, s) in done for m in a.models for s in a.seeds):
+            print(f"[{i}/{len(scm_ids)}] {scm_id} already complete", flush=True)
+            continue
+        new_rows = run_scm(scms_dir / scm_id, attr_dir, a.models, a.explainers, a.seeds, a.force)
+        rows = [r for r in rows if r["scm_id"] != scm_id] + new_rows
+        # write after every SCM so an interrupted run loses nothing
+        pd.DataFrame(rows).sort_values(["scm_id", "model", "seed"]).to_csv(models_csv, index=False)
+        print(f"[{i}/{len(scm_ids)}] {scm_id} done in {time.perf_counter() - t0:.1f}s", flush=True)
     print(f"Model metrics written to {models_csv}")
 
 
