@@ -111,7 +111,7 @@ results/attributions/
 Naming convention:
 - `{scm_id}`: SCM identifier (e.g. `scm_0001_chain_mediation_d5`).
 - `{model}`: Model family (`xgboost` or `mlp`).
-- `{explainer}`: Explainer name (`treeshap`, `kernelshap`, `lime`, `permutation`).
+- `{explainer}`: Explainer name (`exact`, `treeshap`, `kernelshap`, `lime`, `permutation`). `exact` is brute-force exact SHAP of the fitted model; `treeshap` is XGBoost-only; `permutation` is global (the same vector on every row, `is_global: true`).
 - `seed{k}`: Random seed integer (e.g. `seed0`).
 
 ### 2.1 Parquet Schema
@@ -138,12 +138,29 @@ Naming convention:
   "n_explained_rows": 100,
   "mean_abs_attributions": [0.0125, 0.2841, 0.7932, 0.1104, 0.0035],
   "compute_time_seconds": 0.342,
+  "is_global": false,
   "config": {
-    "max_depth": 4,
-    "n_estimators": 100
+    "model": {"max_depth": 4, "n_estimators": 500},
+    "explainer": {"feature_perturbation": "interventional"}
+  },
+  "fitted_model_mean_abs_shap": [0.0121, 0.2850, 0.7901, 0.1110, 0.0041],
+  "reference": {
+    "method": "exact_shap_enumeration",
+    "feature_names": ["X1", "X2", "X3", "X4", "X5"],
+    "n_explain": 100,
+    "n_background": 50,
+    "explain_row_indices": [0, 4, 7, "..."],
+    "background_row_indices": [1, 2, 3, "..."],
+    "compute_time_seconds": 0.09
   }
 }
 ```
+
+#### Reference SHAP fields (required by the metrics pipeline)
+
+- `fitted_model_mean_abs_shap` (`float[d]`): mean absolute **exact** interventional SHAP of the **fitted** model $\Phi(f)$, in feature order `X1..Xd`. It is computed by coalition enumeration (`src.scm.oracle.exact_shap`) on exactly `explain_row_indices` / `background_row_indices` from `ground_truth.json`, **independently of the explainer** in the filename, and once per `scm × model × seed` (identical in every sidecar of that group). It is never the explainer's own vector and never `oracle_mean_abs_shap` (SHAP of the true SCM function $f^*$). For the `exact` explainer the two vectors are equal by construction (`reference.shared_with_exact_explainer: true`).
+- `reference` (`object`): provenance — `method` (must be `exact_shap_enumeration`), `feature_names`, row counts, the explain/background row indices used (the pipeline checks they equal the ground-truth ones), and compute time. Exact enumeration needs $d \le 10$; larger $d$ raises an error instead of approximating.
+- Sidecars written before this field existed are **rejected** by `src.metrics.pipeline_runner` with an actionable message. Re-running `python scripts/run_attributions.py` (without `--force`) back-fills them after verifying that the retrained model reproduces the old artifacts; `--force` recomputes everything.
 
 ---
 
@@ -154,7 +171,7 @@ Tracks total explanation error and the three orthogonal decomposition components
 ### CSV Columns:
 1. `scm_id` (`string`): SCM identifier.
 2. `model` (`string`): `xgboost` or `mlp`.
-3. `explainer` (`string`): `treeshap`, `kernelshap`, `lime`, or `permutation`.
+3. `explainer` (`string`): `exact`, `treeshap`, `kernelshap`, `lime`, or `permutation`.
 4. `seed` (`int`): Model/explainer training seed.
 5. `total_error_l2` (`float`): Normalized L2 error between attribution vector and true total causal effect $\tau$:
    $$\frac{\|\tau - \hat{E}\|_2}{\|\tau\|_2 + 10^{-12}}$$
@@ -165,6 +182,14 @@ Tracks total explanation error and the three orthogonal decomposition components
    $$\frac{\|\Phi(f^*) - \Phi(f)\|_2}{\|\Phi(f^*)\|_2 + 10^{-12}}$$
 9. `explainer_error` (`float`): Approximation error of the explainer algorithm vs exact attribution on fitted model $f$:
    $$\frac{\|\Phi(f) - \hat{E}\|_2}{\|\Phi(f)\|_2 + 10^{-12}}$$
+
+**Notes.**
+- All vectors are non-negative magnitudes: `tau` and `oracle_mean_abs_shap` from `ground_truth.json`, `fitted_model_mean_abs_shap` and `mean_abs_attributions` from the sidecar. $\Phi(f^*)$ is the mean-abs oracle SHAP, $\Phi(f)$ the mean-abs exact SHAP of the fitted model.
+- The component *vectors* ($\tau-\Phi(f^*)$, $\Phi(f^*)-\Phi(f)$, $\Phi(f)-\hat E$) telescope exactly to $\tau-\hat E$. Their normalized L2 *norms* use different denominators and generally do **not** add up to `total_error_l2`; do not sum the three columns.
+- `estimand_gap` and `model_misfit` do not depend on the explainer (identical across explainers of the same scm/model/seed); only `explainer_error` and the total do.
+- **Global explainers** (`permutation`, `is_global: true`) report an increase in test MSE, not SHAP-unit magnitudes. For them `total_error_l2` and `explainer_error` are written as **empty/NaN**; `total_error_rank`, `estimand_gap` and `model_misfit` are still reported.
+- Constant vectors have undefined Kendall tau-b; it is reported as 0.0 (so `total_error_rank = 1.0`). A zero-norm denominator is guarded by the $10^{-12}$ term.
+- Rows are sorted by `scm_id, model, explainer, seed`; the file is rebuilt from the artifacts on every run (never appended).
 
 #### Worked Example Row:
 ```csv
@@ -201,3 +226,19 @@ Contains all diagnostic metrics observable **without causal ground truth**, comp
 scm_id,model,explainer,seed,max_vif,mean_vif,mutual_info_max,mutual_info_mean,test_mse,test_r2,explainer_stability,explainer_sensitivity,prediction_concentration,explainer_disagreement_rank,explainer_disagreement_l2,n_train
 scm_0001_chain_mediation_d5,xgboost,treeshap,0,3.412,1.824,0.482,0.194,0.241,0.865,0.941,0.182,0.345,0.185,0.224,1200
 ```
+
+---
+
+## 5. Summary Tables (`results/tables/`)
+
+Produced by `python -m src.metrics.results_tables` from `errors.csv` (descriptive statistics only). The SCM is the unit of analysis: rows of the same SCM (seeds, pooled models) are averaged first, then mean / `std` / `sem` / 95% t-interval (`ci95_low`, `ci95_high`) are computed across SCMs. Columns per metric: `<metric>_mean, _std, _sem, _ci95_low, _ci95_high, _n` (`_n` = SCMs with a finite value); per group: `n_scms`, `n_rows`.
+
+| File | Group keys |
+| :--- | :--- |
+| `error_summary_by_model_explainer.csv` | `model, explainer` |
+| `error_summary_by_explainer.csv` | `explainer` (models pooled; TreeSHAP exists only for XGBoost) |
+| `error_summary_by_seed.csv` | `model, explainer, seed` |
+| `error_summary_by_family.csv` | `family, model, explainer` (needs `--scms-dir` with `manifest.csv`) |
+| `error_summary_components_by_model.csv` | `model` — `estimand_gap`, `model_misfit` counted once per scm/model/seed |
+
+These are not paired tests and make no causal claim.
