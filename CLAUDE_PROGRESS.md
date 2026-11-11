@@ -1,7 +1,7 @@
 # CLAUDE_PROGRESS.md — DataSphere: Metrics & Results integration
 
 > Durable progress log. "Completed" means executed and verified. "Attempted" means tried but not verified.
-> Last updated: checkpoint 4 (code complete + tested + small E2E done; larger run + docs remain).
+> Last updated: checkpoint 7 (FINAL for this session: code, tests, docs, full 300-SCM seed-0 run all done; seeds 1-2 + optional datasets not done).
 
 ## Identity
 - Project: "When Do Explanations Lie? Testing SHAP/LIME Against Causal Ground Truth" (team DataSphere, PES University ADA)
@@ -50,16 +50,43 @@
 3. Optional datasets (IHDP/Adult/California Housing): NOT started; no compatible SCM ground truth -> document, do not force.
 4. Final full test run; final commit(s) (local only; no push without approval).
 
+## Full benchmark (executed & verified)
+- GENERATED: `python -m src.scm.generate --config configs/scm_default.yaml --output-dir data/scms --workers 2` -> 300 SCMs / 300 ground_truth.json (60/family, 50 per d=5..10, train 240 / heldout 60), ~20 min, 0 rejections. (gitignored `data/`; do NOT regenerate.)
+- ATTRIBUTIONS: `python scripts/run_attributions.py --scms-dir data/scms --results-dir results_full --seeds 0` -> **2700 pairs = 300 SCMs x 9 combos, SEED 0 ONLY**, ~33 min, no skipped combinations (TreeSHAP N/A for MLP by design).
+- METRICS: `python -m src.metrics.pipeline_runner --scms-dir data/scms --attributions-dir results_full/attributions --output-csv results_full/errors.csv` -> 2700 rows, 0 duplicates, 600 NaN total_error_l2/explainer_error = exactly the permutation rows, everything else finite. `python -m src.metrics.results_tables --errors-csv results_full/errors.csv --output-dir results_full/tables --scms-dir data/scms` -> 5 tables.
+- Validation: exact explainer_error max 0.0; TreeSHAP vs independent reference max 3.26e-7 (all d=5..10); estimand_gap equals ground_truth.json estimand_gap.normalized_l2.
+- Descriptive results (n=300 SCMs, seed 0): estimand_gap 0.483 [0.468,0.498]; model_misfit xgboost 0.293 / mlp 0.317; explainer_error kernelshap 0.006 (xgb) / 0.010 (mlp), lime 0.185 (xgb) / 0.138 (mlp); total_error_l2 xgboost exact 0.528 [0.515,0.540], lime 0.596; mlp exact 0.486, lime 0.531.
+- Output locations (all gitignored, in repo_clone/): data/scms_small, data/scms_medium, data/scms, results/ (10-SCM, 3 seeds, 270 pairs), results_medium/ (30 SCMs, seed 0), results_full/ (300 SCMs, seed 0). Sandbox copies only -- NOT in the user's local repo; regenerate there with the commands in README "Metrics and Results Pipeline".
+- Docs updated: README.md (decomposition wording, 300 SCMs, pipeline section, verified-runs paragraph, 4 checkboxes ticked: rank/L2, decomposition, orchestrator, comparison tables), docs/SCHEMAS.md (reference fields, NaN semantics, section 5 tables), tasks.py (attributions/errors/tables), .gitignore (`results_*/`), configs/scm_medium.yaml (new).
+- FINAL FULL TEST RUN: `../venv/bin/python -m pytest tests -q -p no:cacheprovider` -> **131 passed, 0 failed**, 28 s.
+
+## Remaining tasks (priority order)
+1. (Optional) seeds 1 and 2 on the full benchmark: `python scripts/run_attributions.py --scms-dir data/scms --results-dir results_full --seeds 1 2` (~66 min; resumable), then rerun pipeline_runner + results_tables (cheap, idempotent).
+2. (Optional, only if wanted) IHDP / Adult / California Housing: NOT started; no compatible ground truth for the SCM decomposition -> do not force.
+3. Teammate coordination: observables (`results/observables.csv`) belong to Diran; not implemented here. `scripts/make_mock_results.py` still writes MOCK errors/attributions into `results/` (teammate file, left unchanged).
+4. User actions: review the branch, push when ready (nothing pushed by Claude), open PR.
+
+## Known limitations
+- Exact reference needs d<=10 (2^d enumeration); larger d raises.
+- permutation importance: L2-based columns NaN (not SHAP units).
+- Descriptive stats only; explainers evaluated on different SCM/model subsets (TreeSHAP = XGBoost only); seed 0 only for the 300-SCM run.
+- Local user env had xgboost 3.2.0 (outside requirements pin <3.1) -- install via requirements.txt in a 3.11 venv.
+- The original ZIP is flat; work was done in a fresh clone of GitHub main (identical modulo CRLF). The user's local Windows repo must receive these changes via git (push/pull) -- nothing was copied back to it.
+
 ## Current task / next action
-Generate a medium benchmark: create `configs/scm_medium.yaml` (n_scms_per_family: 6 => 30 SCMs, n_samples 2000, d 5-10), generate into data/scms_medium, time it, then run run_attributions for seed 0 and pipeline+tables.
+Session complete. Next action for the user: review `git log` / `git diff 0011994..HEAD`, push `feat/poojitha-metrics-integration` and open a PR. Optional: run seeds 1 2 (task 1 above).
 
 ## Decisions that must not be lost
 - Reference = exact enumeration SHAP (`src.scm.oracle.exact_shap`) of the FITTED model on the same explain/background rows as ground truth. Never copied from the empirical explainer, never `oracle_mean_abs_shap`.
 - Component L2 norms are NOT additive; only the vector differences telescope.
 - Permutation importance is global MSE-increase (not SHAP units): do not compute SHAP-unit L2 metrics for it.
 
-## Git
-Local commits on branch `feat/poojitha-metrics-integration` (see `git log`); NOTHING pushed.
+## Medium benchmark (executed, checkpoint 5)
+- `configs/scm_medium.yaml` (new; = scm_default with 6 SCMs/family) -> `python -m src.scm.generate --config configs/scm_medium.yaml --output-dir data/scms_medium --workers 2` = 30 SCMs (d=5..10, 5 each; 6/family), 1m57s.
+- `python scripts/run_attributions.py --scms-dir data/scms_medium --results-dir results_medium --seeds 0` = 270 pairs (30 SCM x 9 combos), ~3 min. Pipeline -> results_medium/errors.csv 270 rows (60 NaN = permutation). Tables in results_medium/tables.
+- TreeSHAP explainer_error vs independent reference: max 0.00000 at every d=5..10 (strong validation of reference + pipeline).
+- Descriptive (30 SCMs, seed 0): estimand_gap 0.511; model_misfit xgboost 0.299 / mlp 0.353; explainer_error kernelshap 0.006-0.011, lime 0.150 (mlp) / 0.199 (xgboost); total_error_l2 xgboost-exact 0.535 [0.487,0.583], mlp-exact 0.512 [0.468,0.556].
+- Because it was fast, the FULL 300-SCM benchmark is being attempted (see Current task).
 
-## Uncommitted work (at checkpoint 4)
-Modified: scripts/run_attributions.py, src/explainers/{__init__,io}.py, src/metrics/pipeline_runner.py. New: src/explainers/reference.py, tests/test_reference.py, tests/test_pipeline_runner.py, CLAUDE_*.md. No commits yet. Generated (gitignored) data: data/scms_small (10 SCMs), results/ (1-SCM smoke) -- valid, don't regenerate.
+## Git
+Branch `feat/poojitha-metrics-integration` (base `main` @ 0011994). Local commits only; NOTHING pushed. See `git log --oneline`.

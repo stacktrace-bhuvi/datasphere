@@ -23,3 +23,4 @@ results/
 .idea/
 .vscode/
 *.swp
+results_*/
