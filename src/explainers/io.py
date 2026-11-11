@@ -10,16 +10,32 @@ import numpy as np
 import pandas as pd
 
 from src.explainers.attribution import Attribution
+from src.explainers.reference import REFERENCE_FIELD, ReferenceShap
 
 
 def artifact_prefix(scm_id: str, model: str, explainer: str, seed: int) -> str:
     return f"{scm_id}__{model}__{explainer}__seed{seed}"
 
 
+def _check_reference(reference: ReferenceShap, attr: Attribution, row_indices: list[int]) -> None:
+    d = attr.values.shape[1]
+    if reference.values.shape[1] != d or len(reference.feature_names) != d:
+        raise ValueError(f"reference SHAP has {reference.values.shape[1]} features, attribution has {d}")
+    if [int(i) for i in row_indices] != reference.explain_row_indices:
+        raise ValueError("reference SHAP was computed on different explain rows than this attribution")
+
+
 def save_attribution(out_dir: str | Path, scm_id: str, model_name: str, seed: int,
                      attr: Attribution, row_indices: list[int],
-                     model_config: dict[str, Any] | None = None) -> Path:
-    """Write <prefix>.parquet (per-row attributions) and <prefix>.json (sidecar)."""
+                     model_config: dict[str, Any] | None = None,
+                     reference: ReferenceShap | None = None) -> Path:
+    """Write <prefix>.parquet (per-row attributions) and <prefix>.json (sidecar).
+
+    If `reference` (exact SHAP of the fitted model, see src/explainers/reference.py) is given,
+    the sidecar also gets `fitted_model_mean_abs_shap` + a `reference` provenance block, which
+    the metrics pipeline needs. Without it the sidecar is the legacy format (still valid, but
+    the metrics pipeline will reject it with an actionable error).
+    """
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     d = attr.values.shape[1]
@@ -41,9 +57,35 @@ def save_attribution(out_dir: str | Path, scm_id: str, model_name: str, seed: in
         "is_global": bool(attr.is_global),
         "config": {"model": _jsonable(model_config or {}), "explainer": _jsonable(attr.config)},
     }
-    with open(out / f"{prefix}.json", "w", encoding="utf-8") as f:
-        json.dump(sidecar, f, indent=2)
+    if reference is not None:
+        _check_reference(reference, attr, row_indices)
+        sidecar.update(reference.sidecar_fields(shared_with_exact_explainer=attr.explainer == "exact"))
+    _write_json_atomic(out / f"{prefix}.json", sidecar)
     return out / f"{prefix}.parquet"
+
+
+def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2)
+    tmp.replace(path)
+
+
+def has_reference(sidecar_path: str | Path) -> bool:
+    with open(sidecar_path, encoding="utf-8") as f:
+        return REFERENCE_FIELD in json.load(f)
+
+
+def add_reference_to_sidecar(sidecar_path: str | Path, reference: ReferenceShap) -> None:
+    """Back-fill the reference fields into an existing legacy sidecar (explainer output untouched)."""
+    path = Path(sidecar_path)
+    with open(path, encoding="utf-8") as f:
+        sidecar = json.load(f)
+    d = len(sidecar["mean_abs_attributions"])
+    if reference.values.shape[1] != d:
+        raise ValueError(f"{path.name}: reference has {reference.values.shape[1]} features, sidecar has {d}")
+    sidecar.update(reference.sidecar_fields(shared_with_exact_explainer=sidecar.get("explainer") == "exact"))
+    _write_json_atomic(path, sidecar)
 
 
 def load_attribution(out_dir: str | Path, scm_id: str, model: str, explainer: str,

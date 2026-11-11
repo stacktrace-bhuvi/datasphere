@@ -7,6 +7,10 @@ Writes:
 Usage:
   python scripts/run_attributions.py --scms-dir data/scms_small --results-dir results
   python scripts/run_attributions.py --models xgboost --explainers exact treeshap --seeds 0
+
+Every sidecar also stores `fitted_model_mean_abs_shap` (exact SHAP of the fitted model, computed
+once per scm x model x seed and shared by all explainers) -- required by src.metrics.pipeline_runner.
+Existing legacy sidecars without it are back-filled (after a model-identity check) unless --force.
 """
 
 from __future__ import annotations
@@ -21,10 +25,54 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
+import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
-from src.explainers import EXPLAINER_NAMES, explain, save_attribution, supports  # noqa: E402
+from src.explainers import (  # noqa: E402
+    EXPLAINER_NAMES, add_reference_to_sidecar, artifact_prefix, attribution_from_reference,
+    compute_reference_shap, explain, has_reference, save_attribution, supports,
+)
 from src.models import MODEL_NAMES, split_xy, train_model  # noqa: E402
+
+
+class _LazyReference:
+    """Exact SHAP of one fitted model, computed on first use and shared by all explainers."""
+
+    def __init__(self, model, X_exp, X_bg, explain_idx, bg_idx):
+        self._args = (model, X_exp, X_bg, explain_idx, bg_idx)
+        self._ref = None
+
+    def get(self):
+        if self._ref is None:
+            self._ref = compute_reference_shap(*self._args)
+        return self._ref
+
+
+def _verify_same_model(attr_dir: Path, scm_id: str, model_name: str, seed: int, model, ref) -> None:
+    """Before back-filling a reference into OLD sidecars, check the retrained model is the one
+    that produced them. Uses the saved `exact` artifact if present, else models.csv test_mse."""
+    exact_json = attr_dir / f"{artifact_prefix(scm_id, model_name, 'exact', seed)}.json"
+    if exact_json.exists():
+        with open(exact_json, encoding="utf-8") as f:
+            old = np.asarray(json.load(f)["mean_abs_attributions"], dtype=float)
+        if not np.allclose(old, ref.mean_abs, rtol=1e-5, atol=1e-8):
+            raise RuntimeError(
+                f"{scm_id}/{model_name}/seed{seed}: retrained model differs from the one behind the "
+                "existing attribution files (library version or hardware drift?). "
+                "Back-filling would pair mismatched artifacts; re-run with --force instead.")
+        return
+    models_csv = attr_dir.parent / "models.csv"
+    if models_csv.exists():
+        m = pd.read_csv(models_csv)
+        hit = m[(m.scm_id == scm_id) & (m.model == model_name) & (m.seed == seed)]
+        if len(hit) and not np.isclose(float(hit.iloc[-1]["test_mse"]), model.metrics["test_mse"],
+                                       rtol=1e-6, atol=0):
+            raise RuntimeError(
+                f"{scm_id}/{model_name}/seed{seed}: retrained test_mse differs from models.csv; "
+                "re-run with --force instead of back-filling.")
+        return
+    print(f"  WARNING {scm_id}/{model_name}/seed{seed}: cannot verify model identity for back-fill "
+          "(no exact artifact or models.csv row)", flush=True)
 
 
 def run_scm(scm_dir: Path, attr_dir: Path, models, explainers, seeds, force=False) -> list[dict]:
@@ -43,17 +91,26 @@ def run_scm(scm_dir: Path, attr_dir: Path, models, explainers, seeds, force=Fals
         for seed in seeds:
             model = train_model(model_name, df, seed=seed)
             rows.append({"scm_id": scm_id, "model": model_name, "seed": seed, **model.metrics})
+            ref = _LazyReference(model, X_exp, X_bg, explain_idx, bg_idx)
             for ex_name in explainers:
                 if not supports(model, ex_name):
                     continue
-                target = attr_dir / f"{scm_id}__{model_name}__{ex_name}__seed{seed}.parquet"
-                if target.exists() and not force:
+                prefix = artifact_prefix(scm_id, model_name, ex_name, seed)
+                target, sidecar = attr_dir / f"{prefix}.parquet", attr_dir / f"{prefix}.json"
+                if target.exists() and sidecar.exists() and not force:
+                    if not has_reference(sidecar):      # legacy artifact: add reference only
+                        r = ref.get()
+                        _verify_same_model(attr_dir, scm_id, model_name, seed, model, r)
+                        add_reference_to_sidecar(sidecar, r)
                     continue
-                attr = explain(model, ex_name, X_exp, X_bg, seed=seed,
-                               X_train=parts["train"][0], X_test=parts["test"][0],
-                               y_test=parts["test"][1])
+                if ex_name == "exact":                  # exact explainer == the reference algorithm
+                    attr = attribution_from_reference(ref.get())
+                else:
+                    attr = explain(model, ex_name, X_exp, X_bg, seed=seed,
+                                   X_train=parts["train"][0], X_test=parts["test"][0],
+                                   y_test=parts["test"][1])
                 save_attribution(attr_dir, scm_id, model_name, seed, attr, explain_idx,
-                                 model_config=model.config)
+                                 model_config=model.config, reference=ref.get())
     return rows
 
 
