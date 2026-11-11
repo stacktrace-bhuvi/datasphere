@@ -1,0 +1,86 @@
+\section{Introduction}
+Feature attribution methods such as SHAP~\cite{lundberg2017} and LIME~\cite{ribeiro2016} are widely used to explain the predictions of machine learning models. In practice, their outputs are often read in a causal way: if a feature gets a high attribution, people assume that the feature \emph{causes} the outcome, and that changing it will change the outcome. However, this is not what these methods compute. SHAP measures how much a feature changes the \emph{model's} prediction compared to a reference input~\cite{janzing2020}, and LIME fits a simple linear model around one prediction. Neither method knows how the outcome would respond to an actual intervention $P(Y \mid \dob(X_j))$.
+
+There are well-known reasons why the two can differ. A model can rely on a feature that is only correlated with the true cause, an effect that passes through a middle variable (a mediator) is credited to that middle variable instead of the original cause, and approximate explainers add their own sampling error~\cite{krishna2022}. The main problem is that in real data we do not know the true causes, so we cannot check whether an explanation is misleading.
+
+In this project we ask a simpler and more practical question: \emph{can we predict how wrong an explanation is, using only information that is available without knowing the true causes?} For example, if explanations tend to be wrong when features are strongly correlated, when the model fits poorly, or when different explainers disagree, then these signals could be used to warn a user that an explanation should not be trusted.
+
+To study this, we use synthetic data where the true causal structure is known. We generate structural causal models (SCMs), compute the true effect of each feature, train models on data sampled from them, and run five explainers. We then measure how far each explanation is from the true effect. Next, we compute signals that do \emph{not} need the true structure (we call these \emph{observables}), and train a second model, a \emph{meta-model}, to predict the explanation error from them. Finally, we test whether the meta-model still works on types of causal graphs that it has never seen during training.
+
+Our main contributions are:
+\begin{enumerate}
+  \item A benchmark of 300 SCMs from five graph families, with exact causal effects and exact Shapley values of the true function. We split each explanation's error into three parts: the \emph{estimand gap}, the \emph{model misfit} and the \emph{explainer error}.
+  \item Measurements of how large each part of the error is, for XGBoost and MLP models explained by exact SHAP, TreeSHAP, KernelSHAP, LIME and permutation importance.
+  \item A meta-model that predicts explanation error from 39 observables, compared against seven simple baselines, and tested on unseen SCMs and on unseen graph families.
+\end{enumerate}
+All code, data and the notebook that reproduces the tables and figures are available at \url{https://github.com/stacktrace-bhuvi/datasphere}.
+
+\section{Related Work}
+\textbf{Attribution methods.} SHAP~\cite{lundberg2017} is based on Shapley values from game theory. KernelSHAP estimates them by sampling subsets of features, and TreeSHAP computes them exactly for tree models. LIME~\cite{ribeiro2016} fits a small linear model around the input being explained. Permutation importance~\cite{breiman2001} measures how much the model's error increases when one feature is shuffled; it gives one score per feature for the whole dataset instead of one per prediction.
+
+\textbf{Attributions and causality.} Janzing et al.~\cite{janzing2020} argue that SHAP should use the \emph{interventional} (marginal) version of Shapley values, because the conditional version can give credit to features the model does not use. Still, even interventional SHAP describes the model, not the real process that generated the data. The two only agree when the model's inputs are exactly the direct causes of the outcome. Heskes et al.~\cite{heskes2020} and Frye et al.~\cite{frye2020} propose versions of Shapley values that use a known causal graph. We do not assume the graph is known. Instead, we measure how far standard attributions are from the true effect, and ask if this distance can be predicted.
+
+\textbf{Evaluating explanations.} OpenXAI~\cite{agarwal2022} compares explainers using faithfulness and stability measured against the \emph{model}. Krishna et al.~\cite{krishna2022} show that different explainers often rank features differently (the \emph{disagreement problem}), and Alvarez-Melis and Jaakkola~\cite{alvarez2018} study how much explanations change when the input changes slightly. In our work, disagreement and stability are not used to judge explainers. We use them as \emph{inputs} to a model that predicts error, and we measure error against the true causal effect instead of the model.
+
+\section{Problem Setup}
+\subsection{Structural causal models and the causal effect}
+An SCM over features $X_1,\dots,X_d$ and an outcome $Y$ is made of a directed acyclic graph (DAG) $G$ and one equation per node, $X_v = f_v(\mathrm{pa}(v)) + \varepsilon_v$, where $\mathrm{pa}(v)$ are the parents of $v$ and $\varepsilon_v$ is independent noise. $Y$ has no children, and its parents are features. Normal (observational) data is sampled from these equations. An intervention $\dob(X_j = x)$ replaces the equation of $X_j$ with the fixed value $x$, and the change flows to all nodes downstream of $X_j$.
+
+The true effect we compare against is the \emph{total interventional effect} of each feature:
+\begin{equation}
+\tau_j = \mathbb{E}_{x \sim P(X_j)}\!\Big[\tfrac12\big|\,\mathbb{E}[Y \mid \dob(X_j{=}x{+}\sigma_j)] - \mathbb{E}[Y \mid \dob(X_j{=}x{-}\sigma_j)]\big|\Big],
+\label{eq:tau}
+\end{equation}
+where $\sigma_j$ is the standard deviation of $X_j$. In simple words, $\tau_j$ is how much $Y$ changes on average when we push $X_j$ up or down by one standard deviation. This matches how people usually read an attribution. It also includes indirect effects that pass through other features.
+
+\subsection{What attributions measure}
+Let $f^*(x) = \mathbb{E}[Y \mid x]$ be the true outcome function without noise (it only depends on the parents of $Y$), and let $f$ be a trained model. For any function $g$, the interventional Shapley value of feature $j$ for input $x$, with background data $B$, is
+\begin{equation}
+\phi_j(g; x) = \!\!\sum_{S \subseteq [d]\setminus\{j\}}\!\! \tfrac{|S|!\,(d-|S|-1)!}{d!}\big[v_g(S\cup\{j\}) - v_g(S)\big],
+\end{equation}
+where $v_g(S) = \mathbb{E}_{x_B \sim B}[g(x_S, x_{B,\bar S})]$ is the average prediction when the features in $S$ are taken from $x$ and the remaining features come from the background data. To get one number per feature, we average the absolute value over all explained inputs, $\bar\phi_j(g) = \frac1N\sum_i |\phi_j(g; x^{(i)})|$, and compare the vector $\bar{\boldsymbol\phi}$ with $\Tau$.
+
+\subsection{Splitting the error into three parts}
+Let $\Ehat_j$ be the attribution that an explainer actually outputs for the trained model. The difference between the true effect and the explanation can be written as a sum of three differences:
+\begin{equation}
+\underbrace{\Tau - \Ehat}_{\text{total}} = \underbrace{\Tau - \bar{\boldsymbol\phi}(f^*)}_{\text{estimand gap}} + \underbrace{\bar{\boldsymbol\phi}(f^*) - \bar{\boldsymbol\phi}(f)}_{\text{model misfit}} + \underbrace{\bar{\boldsymbol\phi}(f) - \Ehat}_{\text{explainer error}}.
+\label{eq:decomp}
+\end{equation}
+The \emph{estimand gap} is the error that remains even with a perfect model and an exact explainer. It exists because SHAP and the causal effect measure different things. The \emph{model misfit} is the change caused by the trained model being different from the true function. The \emph{explainer error} is the approximation error of KernelSHAP, LIME or permutation importance compared to exact SHAP of the same model. The vectors add up exactly, but their sizes (norms) do not, so we report each part separately.
+
+$\Tau$ is in units of the outcome while $\bar{\boldsymbol\phi}$ is in units of model contribution, so comparing them directly is unfair. We therefore measure every part in three ways: (i) normalised $L_2$ distance, $\|a-b\|_2 / \|a\|_2$; (ii) \emph{share error}, the $L_2$ distance between importance shares $s(v) = |v|/\|v\|_1$, which ignores scale; and (iii) \emph{rank error}, $1 - \text{Kendall } \tau_b$, which only looks at the order of features. The two main targets we try to predict are the share error $\|s(\Tau) - s(\Ehat)\|_2$ and the rank error $1-\tau_b(\Tau, \Ehat)$.
+
+\section{Benchmark Construction}
+\subsection{Graph families and mechanisms}
+We generate SCMs from five graph families, each chosen to create a different kind of problem for explainers: \emph{chain-mediation} ($X_1 \to X_2 \to \dots \to Y$ with side branches), \emph{confounded fork} ($X_1 \to X_2$ and $X_1 \to Y$), \emph{feature collider} ($X_1 \to X_3 \leftarrow X_2$, $X_3 \to Y$), \emph{Erd\H{o}s--R\'enyi DAG} (random edges with probability $0.35$) and \emph{layered} (three layers of nodes). The number of features $d$ goes from 5 to 10 and is balanced within each family. Each node has a non-linear equation ($\tanh$, $\sin$, quadratic or ReLU) with probability $0.5$, an interaction term between two parents with probability $0.2$, and is linear otherwise. Weights are scaled by $1/\sqrt{k}$ for $k$ parents, and values are clipped to $[-10, 10]$. An SCM is rejected and re-generated if too many values get clipped; in the final benchmark no values are clipped.
+
+In our first version (Review~1), the noise on $Y$ was too large compared to the signal: the true function $f^*$ explained only about $33\%$ of the variance of $Y$ ($R^2 \approx 0.33$). We added a parameter that scales down only the noise of $Y$ (\texttt{outcome\_noise\_scale} $=0.4$). This raises the average $R^2$ of $f^*$ to $0.67$ (range $0.23$--$0.94$) without changing the distribution of the features.
+
+The final benchmark has $60$ SCMs per family ($300$ in total). Each SCM has $2000$ samples, split 60/20/20 into train, validation and test sets. The layered family is kept aside as a held-out family; the other four are used for training.
+
+\subsection{Ground truth}
+We estimate $\tau_j$ in~\eqref{eq:tau} by simulation. We pick $50$ values of $X_j$ from its distribution, and for each value we simulate the two interventions using the same $5000$ noise samples, so that the noise cancels out. We average over the noise \emph{before} taking the absolute value, because taking the absolute value first would overestimate the effect for non-linear equations. The whole estimate is repeated five times and its standard error is stored. For the true function $f^*$ we compute exact Shapley values by going through all $2^d$ feature subsets, on a fixed set of $100$ test rows (to explain) and $50$ training rows (as background). Every explainer uses these same rows, so all terms in~\eqref{eq:decomp} can be compared directly. We checked that the exact values satisfy the standard Shapley properties (efficiency, linearity, dummy) up to $10^{-8}$.
+
+\section{Models, Explainers and Error Measurement}
+On every SCM we train two models with three random seeds each: XGBoost~\cite{chen2016} (depth $4$, up to $500$ trees with early stopping on the validation set) and a multilayer perceptron (MLP) with two hidden layers of $64$ units (Adam optimiser, early stopping on the same validation set).
+
+We run five explainers on the same explain and background rows: (i) \emph{exact} SHAP of the trained model, computed by brute force over all feature subsets, which gives the $\bar{\boldsymbol\phi}(f)$ term; (ii) TreeSHAP (XGBoost only; it matches exact SHAP to $10^{-4}$); (iii) KernelSHAP with $\max(2d+2, 2^d/4)$ sampled subsets, so it is always an approximation; (iv) LIME with $1000$ samples per input; and (v) permutation importance on the test set ($10$ repeats). Permutation importance gives scores in units of error increase, so we only compare it using the share and rank errors. For each explanation, the error table is built by combining it with the exact SHAP output for the same SCM, model and seed.
+
+\section{Observables}
+For every explanation (one SCM, model, explainer and seed) we compute $39$ observables. None of them use $\Tau$, the true function or the graph, so all of them can be computed on real data.
+
+\textbf{Data level} (training set only): the largest and average absolute correlation between features, the fraction of feature pairs with $|r|>0.3$, the largest and average variance inflation factor (VIF), the largest and average mutual information between features, the largest and average correlation and mutual information between each feature and $Y$, the number of training rows and $d$.
+
+\textbf{Model level}: test and validation error, test and train $R^2$ and the gap between them, how spread out the predictions are compared to $Y$, the shape of the test residuals (kurtosis), and the correlation between the predictions of XGBoost and the MLP (\emph{model agreement}).
+
+\textbf{Explainer level}: how concentrated the attributions are (Gini coefficient, share of the top feature, effective number of features), whether the sign of each feature's attribution is consistent across inputs, how stable the explainer is across random seeds, how much it disagrees with the other explainers on the same model, how much the same explainer disagrees between XGBoost and the MLP, and how much the attributions change when the inputs are slightly perturbed (Gaussian noise of $0.05$ standard deviations).
+
+The name of the model and the explainer are also given to the meta-model, since a user always knows which ones they used.
+
+\section{Evaluation Method}
+Each row of our dataset is one explanation. The inputs are the observables and the target is its error. We train three meta-models: gradient-boosted trees (GBM, $200$ trees of depth $3$), a random forest and ridge regression. We compare them with seven simple baselines that represent checks a user might already do: always predicting the average error (constant), using feature correlation only, maximum VIF only, test error only, sample size only, explainer disagreement only, and explainer stability only. Each baseline is a ridge regression on the listed columns.
+
+Rows from the same SCM share the same data, so they are not independent. Therefore we never put rows from one SCM in both the training and the test set. We use three evaluation setups. \emph{Grouped CV}: five-fold cross-validation where each fold holds out whole SCMs, keeping the families balanced (tests unseen SCMs from known families). \emph{Leave-one-graph-family-out (LOGFO)}: train on four families and test on the fifth, repeated for all five families (tests unseen families). \emph{Held-out split}: train on the four training families and test on the layered family.
+
+We report the Spearman correlation $\rho$ between predicted and actual error, $R^2$, the mean absolute error (MAE), and the AUROC for detecting explanations whose error is above the training median. To check whether the meta-model is really better than a baseline, we use a bootstrap that resamples whole SCMs ($2000$ times) and a Wilcoxon signed-rank test on the average error per SCM. We also measure performance separately for each (model, explainer) pair, which tests whether the meta-model can rank SCMs even when the explanation method is fixed.
+

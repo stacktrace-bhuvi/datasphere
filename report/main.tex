@@ -42,89 +42,7 @@
 explainable AI, SHAP, LIME, structural causal models, feature attribution, causal inference, meta-learning, benchmark
 \end{IEEEkeywords}
 
-\section{Introduction}
-Post-hoc feature attribution methods such as SHAP~\cite{lundberg2017} and LIME~\cite{ribeiro2016} are now a routine part of the machine-learning workflow. Their outputs are typically read causally: a feature with a large attribution is taken to be one that \emph{drives} the outcome, and therefore one that is worth intervening on. This reading is not what the methods compute. Shapley-value attributions quantify how much a feature moves the \emph{model's} prediction relative to a reference distribution~\cite{janzing2020}; LIME fits a local linear surrogate to the model. Neither has access to the interventional distribution $P(Y \mid \dob(X_j))$ that the causal reading presupposes.
-
-The consequences are well documented in principle: models exploit confounders and proxies, mediated effects are credited to the mediator rather than the cause, and local approximations add sampling error on top~\cite{krishna2022}. In practice, however, the practitioner has no causal ground truth, so a misleading explanation is indistinguishable from a faithful one. The failure cannot be detected, let alone corrected.
-
-This project asks a narrower and, we believe, more actionable question than ``are explanations causal?'': \emph{can the size of the explanation error be predicted from quantities that are observable without ground truth?} If explanation error is systematically related to properties of the data (dependence between features), of the model (fit quality) and of the explainer itself (stability, agreement with other explainers), a diagnostic could flag the situations in which an explanation should not be trusted---even though it cannot say what the right explanation is.
-
-We treat the question as a meta-learning problem on a controlled benchmark. We generate structural causal models (SCMs) with known graphs and mechanisms, compute the true total interventional effect of every feature and the exact Shapley attribution of the true function, train predictive models on observational draws, run five explainers, and measure explanation error against the causal truth. We then extract a set of ground-truth-free observables for every explanation, train diagnostic meta-models to predict the error from the observables, and test whether the diagnostic generalises to \emph{graph families it has never seen}.
-
-Our contributions are:
-\begin{enumerate}
-  \item A benchmark of 300 SCMs across five graph families with exact causal ground truth and oracle Shapley values, together with a three-way decomposition of explanation error into an \emph{estimand gap}, \emph{model misfit} and \emph{explainer approximation error}, computed in raw, share-normalised and rank space.
-  \item An empirical account of where explanation error comes from for XGBoost and MLP models explained by exact SHAP, TreeSHAP, KernelSHAP, LIME and permutation importance.
-  \item A diagnostic meta-model trained on 37 ground-truth-free observables, evaluated under grouped cross-validation, leave-one-graph-family-out (LOGFO) and a designated held-out family, against seven single-signal baselines with paired bootstrap and Wilcoxon tests.
-\end{enumerate}
-Code, configuration and the notebook reproducing every table and figure are available at \url{https://github.com/stacktrace-bhuvi/datasphere}.
-
-\section{Related Work}
-\textbf{Attribution methods.} SHAP~\cite{lundberg2017} unifies several additive attribution methods under the Shapley value; KernelSHAP approximates it by weighted linear regression over sampled coalitions and TreeSHAP computes it exactly for tree ensembles. LIME~\cite{ribeiro2016} fits a sparse linear surrogate around the instance. Permutation importance~\cite{breiman2001} measures the increase in loss when a feature is shuffled and is global rather than local.
-
-\textbf{Causal readings of attributions.} Janzing et al.~\cite{janzing2020} argue that the appropriate reference distribution for Shapley values is the \emph{interventional} (marginal) one, because conditional expectations attribute importance to features the model never uses. Even so, interventional SHAP of a model is a statement about the model's response surface, not about the data-generating process; the two coincide only when the model's inputs are the direct causes of the outcome and nothing else. Heskes et al.~\cite{heskes2020} and Frye et al.~\cite{frye2020} propose causal Shapley values that incorporate a known graph. We do not assume a graph; we measure how far graph-agnostic attributions are from the causal effect and ask whether that distance is predictable.
-
-\textbf{Evaluating explanations.} OpenXAI~\cite{agarwal2022} benchmarks explainers on faithfulness, stability and fairness metrics computed with respect to the \emph{model}; synthetic ground truth is used for a single data-generating process. Krishna et al.~\cite{krishna2022} document the \emph{disagreement problem}: different explainers routinely rank features differently, and practitioners have no principled way to resolve it. Alvarez-Melis and Jaakkola~\cite{alvarez2018} study the robustness of explanations to input perturbations. We use disagreement and perturbation stability not as evaluation criteria but as \emph{inputs} to a diagnostic, and we evaluate against the causal estimand rather than the model.
-
-\section{Problem Setup}
-\subsection{Structural causal models and the causal estimand}
-An SCM over features $X_1,\dots,X_d$ and an outcome $Y$ consists of a DAG $G$ and one structural equation per node, $X_v = f_v(\mathrm{pa}(v)) + \varepsilon_v$, with independent exogenous noise. $Y$ is a strict sink whose parents are features. Observational data are draws from the induced joint distribution; an intervention $\dob(X_j = x)$ replaces the equation of $X_j$ by the constant $x$ and propagates downstream.
-
-Our causal target is the \emph{total interventional effect} of each feature, averaged over its own marginal:
-\begin{equation}
-\tau_j = \mathbb{E}_{x \sim P(X_j)}\!\Big[\tfrac12\big|\,\mathbb{E}[Y \mid \dob(X_j{=}x{+}\sigma_j)] - \mathbb{E}[Y \mid \dob(X_j{=}x{-}\sigma_j)]\big|\Big],
-\label{eq:tau}
-\end{equation}
-where $\sigma_j$ is the marginal standard deviation of $X_j$. This is the quantity a decision-maker has in mind when reading an attribution as ``how much $Y$ changes if I move $X_j$ by a typical amount''. It includes effects mediated through other features.
-
-\subsection{What attributions measure}
-Let $f^*(x) = \mathbb{E}[Y \mid x]$ be the true noiseless outcome function (it depends only on the parents of $Y$) and $f$ a fitted model. For any function $g$, the interventional Shapley value of feature $j$ at instance $x$ with background distribution $B$ is
-\begin{equation}
-\phi_j(g; x) = \!\!\sum_{S \subseteq [d]\setminus\{j\}}\!\! \tfrac{|S|!\,(d-|S|-1)!}{d!}\big[v_g(S\cup\{j\}) - v_g(S)\big],
-\end{equation}
-with $v_g(S) = \mathbb{E}_{x_B \sim B}[g(x_S, x_{B,\bar S})]$, the expected prediction when the features in $S$ are fixed to $x$ and the rest are drawn from the background. We summarise local attributions by their mean absolute value over explain instances, $\bar\phi_j(g) = \frac1N\sum_i |\phi_j(g; x^{(i)})|$, and compare the vector $\bar{\boldsymbol\phi}$ with $\Tau$.
-
-\subsection{Three-way error decomposition}
-Let $\Ehat_j$ denote the empirical attribution produced by an explainer for the fitted model. The feature-wise differences telescope exactly:
-\begin{equation}
-\underbrace{\Tau - \Ehat}_{\text{total}} = \underbrace{\Tau - \bar{\boldsymbol\phi}(f^*)}_{\text{estimand gap}} + \underbrace{\bar{\boldsymbol\phi}(f^*) - \bar{\boldsymbol\phi}(f)}_{\text{model misfit}} + \underbrace{\bar{\boldsymbol\phi}(f) - \Ehat}_{\text{explainer error}}.
-\label{eq:decomp}
-\end{equation}
-The \emph{estimand gap} is what remains with a perfect model and an exact explainer: it is the structural mismatch between the Shapley objective and the causal estimand. \emph{Model misfit} is the attribution change caused by $f \neq f^*$. \emph{Explainer error} is the approximation error of KernelSHAP sampling, LIME's surrogate or permutation shuffling relative to exact SHAP of the same fitted model. The norms of the three components do \emph{not} add up to the norm of the total; we report them separately.
-
-Because $\Tau$ is in outcome units and $\bar{\boldsymbol\phi}$ in contribution units, a raw $L_2$ distance never reaches zero even for a perfectly proportional attribution. We therefore report every component in three spaces: (i) normalised $L_2$, $\|a-b\|_2 / \|a\|_2$; (ii) \emph{share space}, the $L_2$ distance between importance shares $s(v) = |v|/\|v\|_1$, which is scale-free; and (iii) \emph{rank space}, $1 - \text{Kendall } \tau_b$, which is tie-aware and therefore robust to the exact zeros that mediated features receive. The two headline targets of the diagnostic are the rank error $1-\tau_b(\Tau, \Ehat)$ and the share error $\|s(\Tau) - s(\Ehat)\|_2$.
-
-\section{Benchmark Construction}
-\subsection{Graph families and mechanisms}
-We generate SCMs from five seeded graph families designed to exercise distinct failure modes: \emph{chain-mediation} ($X_1 \to X_2 \to \dots \to Y$ with side branches), \emph{confounded fork} ($X_1 \to X_2$ and $X_1 \to Y$), \emph{feature collider} ($X_1 \to X_3 \leftarrow X_2$, $X_3 \to Y$), \emph{Erd\H{o}s--R\'enyi DAG} (upper-triangular edges with probability $0.35$) and \emph{layered} (three strict layers). Feature counts $d \in \{5,\dots,10\}$ are balanced within each family. Each non-root node receives, with probability $0.5$, an additive non-linear mechanism drawn from $\{\tanh, \sin, \text{quadratic}, \text{ReLU}\}$, with probability $0.2$ a pairwise interaction term, and otherwise a linear mechanism. Incoming weights are normalised and scaled by $1/\sqrt{k}$ for $k$ parents, non-linear activations are centred and scaled, and outputs are clipped to $[-10, 10]$; SCMs are rejection-sampled so that fewer than $0.5\%$ of outcome values and $1\%$ of any node are clipped (in the final benchmark none are).
-
-A pilot run (Review~1) showed that this scaling leaves the outcome with a low signal-to-noise ratio: the true function $f^*$ reached only $R^2 \approx 0.33$ on average, so model misfit was dominated by irreducible noise. We added a single multiplier on the exogenous noise of $Y$ (\texttt{outcome\_noise\_scale} $=0.4$), which raises the oracle $R^2$ to $0.67$ on average over the benchmark with a useful spread ($0.23$--$0.94$) while leaving the feature distributions unchanged.
-
-The full benchmark has $60$ SCMs per family ($300$ in total), each with $2000$ observational draws split 60/20/20 into train/validation/test. The layered family is designated as held-out; the other four are the training families.
-
-\subsection{Ground truth}
-$\tau_j$ in~\eqref{eq:tau} is estimated by a nested Monte-Carlo estimator with common random numbers: $50$ reference values of $X_j$ are drawn from its marginal, and for each the two interventional means are estimated from $5000$ shared noise draws \emph{before} taking the absolute value (taking $|Y_+ - Y_-|$ per draw would be biased upward by Jensen's inequality for non-linear mechanisms). The estimate is repeated with five seeds and the Monte-Carlo standard error is stored. Exact interventional Shapley values of $f^*$ are computed by enumerating all $2^d$ coalitions in vectorised form on a fixed set of $100$ test rows (explain set) and $50$ training rows (background); the same rows are used by every explainer so that all quantities in~\eqref{eq:decomp} are directly comparable. The oracle satisfies efficiency, linearity and the dummy axiom to $10^{-8}$, and values below $10^{-12}$ are set to exact zero so that rank metrics see genuine ties.
-
-\section{Models, Explainers and Error Measurement}
-Two model families are trained on every SCM with three random seeds: gradient-boosted trees (XGBoost, depth $4$, up to $500$ rounds with early stopping on the validation split) and a two-hidden-layer MLP ($64\times64$, Adam, early stopping on the same validation split). Both expose a fast batched \texttt{predict}, which the exact oracle needs: explaining $100$ rows with $50$ background rows at $d=10$ costs $5.1$ million model evaluations.
-
-Five explainers are run on the fixed explain/background rows: (i)~\emph{exact}, brute-force interventional SHAP of the fitted model---the $\bar{\boldsymbol\phi}(f)$ term; (ii)~TreeSHAP with interventional perturbation (XGBoost only; verified to match \emph{exact} to $10^{-4}$); (iii)~KernelSHAP with a coalition budget of $\max(2d+2, 2^d/4)$, so that it remains a genuine approximation at every $d$; (iv)~LIME with $1000$ perturbations, coefficients converted to contribution units; (v)~permutation importance on the test split ($10$ repeats), a global measure in MSE units that is only compared in share and rank space. Attributions are stored per row together with a sidecar of mean absolute values; the error table joins each sidecar with the \emph{exact} sidecar of the same (SCM, model, seed) to evaluate~\eqref{eq:decomp}.
-
-\section{Observables}
-For every (SCM, model, explainer, seed) we compute $37$ quantities that a practitioner could compute without any causal knowledge.
-
-\textbf{Data level} (training split only): maximum and mean pairwise $|r|$ between features, the fraction of pairs with $|r|>0.3$, maximum and mean variance-inflation factor, maximum and mean pairwise mutual information (k-NN estimator), maximum and mean feature--outcome $|r|$ and mutual information, $n_{\text{train}}$ and $d$.
-
-\textbf{Model level}: test and validation MSE, test $R^2$, train $R^2$ and the train--test gap, the ratio of prediction variance to outcome variance, excess kurtosis of test residuals, and the Pearson correlation between the XGBoost and MLP predictions on the test rows (\emph{model agreement}).
-
-\textbf{Explainer level}: concentration of the mean-absolute attribution shares (Gini coefficient, top-1 share, effective number of features $e^{H}$), sign consistency of local attributions, dispersion of local attributions, agreement of the explainer with itself across seeds (Kendall $\tau_b$ and share $L_2$), disagreement with the other explainers run on the same model and seed (mean rank, share and top-3 disagreement, and against LIME as a fixed reference), disagreement between the same explainer on XGBoost and on the MLP, and the change of the attribution under a Gaussian input perturbation of $0.05$ feature standard deviations (rank stability, relative change, a Lipschitz-type sensitivity $\max_i \|\Delta \phi_i\| / \|\Delta x_i\|$, and the shift of the global shares).
-
-None of these uses $\Tau$, the oracle, or the graph; one-hot indicators of the model and explainer, which are of course known, are added as inputs.
-
-\section{Diagnostic Evaluation Protocol}
-Each row of the meta-table is one explanation; inputs are the observables, the target is its error. We fit three meta-models---gradient-boosted trees ($200$ trees, depth $3$), a random forest and a standardised ridge regression---and seven baselines that represent what a practitioner might already do: the constant training mean, correlation only, maximum VIF only, test error only, sample size only, explainer disagreement only, and explainer stability only, each as a ridge regression on the named columns.
-
-Rows from the same SCM are not independent, so all evaluation is grouped by SCM. We use three protocols. \emph{Grouped CV}: five-fold StratifiedGroupKFold with groups = SCM and strata = family (unseen SCMs from seen families). \emph{LOGFO}: for each of the five families, train on the other four and test on it. \emph{Designated split}: train on the four training families and test on the held-out layered family. We report Spearman correlation between predicted and actual error, $R^2$, MAE, and the AUROC for flagging explanations whose error exceeds the training-set median. Significance is assessed with a paired cluster bootstrap over SCMs ($2000$ resamples) of the MAE and Spearman gain of the meta-model over each baseline, and with a Wilcoxon signed-rank test on per-SCM mean absolute errors. We additionally score predictions \emph{within} each (model, explainer) subset to ask whether the diagnostic can rank SCMs for a fixed method, which removes the easy part of the task.
+\input{body}
 
 \input{tables}
 \input{results}
@@ -135,7 +53,7 @@ Rows from the same SCM are not independent, so all evaluation is grouped by SCM.
 \input{conclusion}
 
 \section*{Contributions}
-B.S.K.: SCM generation, interventional engine, oracle SHAP, data contracts. M.S.: model training, explainer wrappers, attribution persistence. P.L.B.R.: error metrics, decomposition, error-table builder and summary tables. D.S.: observables, diagnostic meta-models, baselines, evaluation protocols, statistical tests and figures.
+B.S.K.: SCM generation, intervention simulation, exact Shapley values of the true function, data formats. M.S.: model training, explainer code, saving attributions. P.L.B.R.: error metrics, error decomposition, error tables. D.S.: observables, meta-models, baselines, evaluation, statistical tests and figures.
 
 \begin{thebibliography}{00}
 \bibitem{lundberg2017} S.~M. Lundberg and S.-I. Lee, ``A unified approach to interpreting model predictions,'' in \emph{Advances in Neural Information Processing Systems 30}, 2017.

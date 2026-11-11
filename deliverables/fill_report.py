@@ -57,7 +57,7 @@ def main() -> None:
     dme = N["decomposition_by_model_explainer"]
     out.append(r"""\newcommand{\TableDecomposition}{%
 \begin{table}[t]
-\caption{Error decomposition, mean over SCMs and seeds. Share: $L_2$ distance between importance shares. Rank: $1-$Kendall $\tau_b$. Top-$k$: fraction of causal drivers recovered.}
+\caption{The three parts of the error, averaged over SCMs and seeds. Share: $L_2$ distance between importance shares. Rank: $1-$Kendall $\tau_b$. Top-$k$: fraction of true top features found.}
 \label{tab:decomp}
 \centering\footnotesize
 \setlength{\tabcolsep}{2pt}
@@ -87,7 +87,7 @@ Model & Explainer & Gap & Misfit & Expl. & Total & Total & \\
     ebf = N["error_by_family_explainer"]
     out.append(r"""\newcommand{\TableGapByFamily}{%
 \begin{table}[t]
-\caption{Estimand gap per graph family (perfect model, exact SHAP), mean $\pm$ sd over SCMs, and total rank error of KernelSHAP and LIME on fitted models. $^\dagger$held-out family.}
+\caption{Estimand gap for each graph family (perfect model, exact SHAP), mean $\pm$ standard deviation over SCMs, and total rank error of KernelSHAP and LIME on the trained models. $^\dagger$held-out family.}
 \label{tab:gap}
 \centering\footnotesize
 \setlength{\tabcolsep}{3pt}
@@ -110,7 +110,7 @@ Family & Gap (rank) & Gap (share) & KernelSHAP & LIME \\
         tl = "rank error ($1-\\tau_b$)" if tgt == "total_error_rank" else "share error"
         out.append(f"""\\newcommand{{\\{macro}}}{{%
 \\begin{{table*}}[t]
-\\caption{{Predicting the {tl} of an explanation from observables. Pooled out-of-sample Spearman $\\rho$ (predicted vs actual), $R^2$ and AUROC for flagging explanations above the training median, under three protocols.}}
+\\caption{{Predicting the {tl} of an explanation from observables: Spearman $\\rho$ (predicted vs actual), $R^2$, and AUROC for detecting explanations with above-median error, for the three evaluation setups.}}
 \\label{{tab:diag_{'rank' if tgt == 'total_error_rank' else 'share'}}}
 \\centering\\small
 \\setlength{{\\tabcolsep}}{{6pt}}
@@ -139,7 +139,7 @@ Method & $\\rho$ & $R^2$ & AUC & $\\rho$ & $R^2$ & AUC & $\\rho$ & $R^2$ & AUC \
     la = N["logfo_by_family_auroc"].get(HEAD, {})
     out.append(r"""\newcommand{\TableLogfoFamily}{%
 \begin{table}[t]
-\caption{LOGFO, share-error target: Spearman $\rho$ (AUROC in parentheses) on each held-out family. Each column is a model trained on the other four families.}
+\caption{LOGFO, share error: Spearman $\rho$ (AUROC in brackets) for each held-out family. Each column uses a model trained on the other four families.}
 \label{tab:logfo}
 \centering\scriptsize
 \setlength{\tabcolsep}{2.5pt}
@@ -162,7 +162,7 @@ Method & Chain & Fork & Collider & Random & Layered \\
     pt = [r for r in N["paired_tests"] if r["target"] == HEAD and r["method_a"] == "meta_gbm"]
     out.append(r"""\newcommand{\TablePairedTests}{%
 \begin{table}[t]
-\caption{Gain of the GBM meta-model over each baseline (share-error target). Paired cluster bootstrap over SCMs (2000 resamples): mean gain in Spearman $\rho$ and in MAE with 95\% CI; Wilcoxon signed-rank $p$ on per-SCM absolute errors; share of SCMs on which the meta-model has the lower error.}
+\caption{Improvement of the GBM meta-model over each baseline (share error). Bootstrap over SCMs (2000 samples): average improvement in Spearman $\rho$ and in MAE with 95\% interval; Wilcoxon test $p$-value on per-SCM errors; percentage of SCMs where the meta-model has the lower error.}
 \label{tab:tests}
 \centering\footnotesize
 \setlength{\tabcolsep}{2.5pt}
@@ -191,7 +191,7 @@ Protocol & vs.\ & $\Delta\rho$ [95\% CI] & $\Delta$MAE [95\% CI] & $p_{W}$ & bet
     fi = N["feature_importance"].get(HEAD, [])[:10]
     out.append(r"""\newcommand{\TableFeatureImportance}{%
 \begin{table}[t]
-\caption{Permutation importance of observables in the GBM meta-model: drop in $R^2$ on the held-out layered family when the column is shuffled (mean $\pm$ sd over 10 repeats).}
+\caption{Most important observables in the GBM meta-model: drop in $R^2$ on the layered family when the column is shuffled (mean $\pm$ standard deviation over 10 repeats).}
 \label{tab:fi}
 \centering\small
 \begin{tabular}{lc}
@@ -209,7 +209,7 @@ Observable & $\Delta R^2$ \\
     best = N["diagnostic"][HEAD]["logfo"]["best_baseline"]
     out.append(r"""\newcommand{\TableByMethod}{%
 \begin{table}[t]
-\caption{Stricter test: Spearman $\rho$ between predicted and actual share error \emph{within} each (model, explainer) subset under LOGFO, i.e.\ ranking SCMs for a fixed explanation method.}
+\caption{Spearman $\rho$ between predicted and actual share error within each (model, explainer) pair under LOGFO, i.e.\ ranking SCMs when the explanation method is fixed.}
 \label{tab:bymethod}
 \centering\small
 \begin{tabular}{lcc}
@@ -229,7 +229,7 @@ Subset & Meta: GBM & """ + METHOD.get(best, best) + r""" \\
     meths = ["meta_gbm", "baseline_test_error", "baseline_disagreement_only", "baseline_stability_only", "baseline_max_vif"]
     out.append(r"""\newcommand{\TableComponents}{%
 \begin{table}[t]
-\caption{Which part of the error is predictable? Pooled LOGFO Spearman $\rho$ ($R^2$ in parentheses) when each component of~\eqref{eq:decomp}, and the two totals, is the target.}
+\caption{How well each part of the error can be predicted: LOGFO Spearman $\rho$ ($R^2$ in brackets) when each part of~\eqref{eq:decomp}, and the two totals, is the target.}
 \label{tab:components}
 \centering\footnotesize
 \setlength{\tabcolsep}{2.5pt}
