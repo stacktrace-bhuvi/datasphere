@@ -166,7 +166,7 @@ Naming convention:
 
 ## 3. Error Decomposition (`results/errors.csv`)
 
-Tracks total explanation error and the three orthogonal decomposition components per SCM, model, and explainer.
+Tracks total explanation error and the three ordered decomposition components (estimand gap, model misfit, explainer error; their norms are not additive, see the notes below) per SCM, model, and explainer.
 
 ### CSV Columns:
 1. `scm_id` (`string`): SCM identifier.

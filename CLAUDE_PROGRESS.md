@@ -7,7 +7,7 @@
 - Project: "When Do Explanations Lie? Testing SHAP/LIME Against Causal Ground Truth" (team DataSphere, PES University ADA)
 - Repo: https://github.com/stacktrace-bhuvi/datasphere
 - User's role: Poojitha (@PoojithaBrpl) — **Metrics and Results**
-- Working clone (sandbox): `/home/claude/work/repo_clone`; venv (sandbox, not in repo): `/home/claude/work/venv` (Python 3.11.18)
+- Work was done in a throw-away sandbox clone of GitHub `main` (Python 3.11.18 venv built from requirements.txt); paths of that sandbox are intentionally not recorded.
 - Branch: `feat/poojitha-metrics-integration` (created from `main` @ `0011994`)
 - Merged metrics work present: PR #3, commit `8525def` (verified in `git log`).
 
@@ -21,7 +21,7 @@
 
 ## Baseline test results (actually run)
 - Env: Python 3.11.18, numpy 2.4.6, pandas 3.1.1, scikit-learn 1.9.1, xgboost 3.0.5, shap 0.51.0, lime 0.2.0.1, pyarrow 26.0.1, pytest 9.2.0
-- Command: `cd repo_clone && ../venv/bin/python -m pytest tests -q -x -p no:cacheprovider`
+- Command: `python -m pytest tests -q -x` (in a Python 3.11 venv)
 - Result: **63 passed, 0 failed** (3 harmless shap PendingDeprecationWarnings), 23.7 s.
 - (User's earlier "4 failures" were from shap/lime not installed.)
 
@@ -39,32 +39,51 @@
 - `src/metrics/results_tables.py` rewritten: SCM = unit of analysis, mean/SD/SEM/95% t-CI, n_scms/n_rows/<metric>_n; tables by_model_explainer, by_explainer, by_seed, by_family (needs --scms-dir manifest), components_by_model (explainer-independent terms de-duplicated). `tests/test_results_tables.py`: 9 passed. NOTE: std/CI are now across SCMs (old version: across rows) -- documented in module docstring.
 - Metric audit: `error_metrics.py`/`decomposition.py` now reject non-1-D input (previously a (2,2) array silently matched a length-4 vector). Metric definitions UNCHANGED. `tests/test_error_metrics.py` covers ties, constant vectors, zero-norm (eps), NaN/inf, shape mismatch, telescoping-vs-non-additive norms.
 - `tests/test_end_to_end.py` (7 tests): real SCM->ground truth->train->explain->errors->tables, legacy back-fill, mismatch refusal, skip-on-rerun.
-- FULL SUITE: `../venv/bin/python -m pytest tests -q -p no:cacheprovider` -> **131 passed, 0 failed** (27 s).
+- FULL SUITE: `python -m pytest tests -q` -> **131 passed, 0 failed** (27 s).
 - REAL SMALL BENCHMARK (all executed): `python scripts/run_attributions.py --scms-dir data/scms_small --results-dir results --seeds 0 1 2` -> 10 SCMs x 3 seeds x {xgboost: exact,treeshap,kernelshap,lime,permutation; mlp: exact,kernelshap,lime,permutation} = **270 attribution pairs, 2m54s** (SCM0/seed0 was skipped = skip logic works). `python -m src.metrics.pipeline_runner --scms-dir data/scms_small --attributions-dir results/attributions --output-csv results/errors.csv` -> 270 rows (60 NaN in total_error_l2/explainer_error = exactly the permutation rows). `python -m src.metrics.results_tables --errors-csv results/errors.csv --output-dir results/tables --scms-dir data/scms_small` -> 5 tables.
 - Observed (descriptive, n=10 SCMs, wide CIs): mean estimand_gap 0.568; mean model_misfit mlp 0.398 / xgboost 0.442; mean explainer_error: exact/treeshap 0.000, kernelshap 0.015-0.023, lime 0.154 (mlp) / 0.241 (xgboost); total_error_l2 mean ~0.57-0.70. Total error is dominated by estimand gap + model misfit, not explainer approximation (except LIME).
 - Back-fill on real artifacts verified: stripped reference from 4 xgboost sidecars (scm_0000/seed0), pipeline raised actionable error, re-run restored reference bit-identically (only reference.compute_time_seconds differs), parquets untouched, errors.csv byte-identical.
 
-## Remaining tasks (priority order)
-1. Larger synthetic run (feasible subset; full 300 SCMs est. many hours on 2 cores) -> record exact counts.
-2. README + docs/SCHEMAS.md updates (sidecar reference fields, errors.csv NaN semantics, tables, commands, runtime, limits); fix README checkboxes only where verified; tasks.py commands for run/errors/tables.
-3. Optional datasets (IHDP/Adult/California Housing): NOT started; no compatible SCM ground truth -> document, do not force.
-4. Final full test run; final commit(s) (local only; no push without approval).
-
-## Full benchmark (executed & verified)
-- GENERATED: `python -m src.scm.generate --config configs/scm_default.yaml --output-dir data/scms --workers 2` -> 300 SCMs / 300 ground_truth.json (60/family, 50 per d=5..10, train 240 / heldout 60), ~20 min, 0 rejections. (gitignored `data/`; do NOT regenerate.)
-- ATTRIBUTIONS: `python scripts/run_attributions.py --scms-dir data/scms --results-dir results_full --seeds 0` -> **2700 pairs = 300 SCMs x 9 combos, SEED 0 ONLY**, ~33 min, no skipped combinations (TreeSHAP N/A for MLP by design).
-- METRICS: `python -m src.metrics.pipeline_runner --scms-dir data/scms --attributions-dir results_full/attributions --output-csv results_full/errors.csv` -> 2700 rows, 0 duplicates, 600 NaN total_error_l2/explainer_error = exactly the permutation rows, everything else finite. `python -m src.metrics.results_tables --errors-csv results_full/errors.csv --output-dir results_full/tables --scms-dir data/scms` -> 5 tables.
-- Validation: exact explainer_error max 0.0; TreeSHAP vs independent reference max 3.26e-7 (all d=5..10); estimand_gap equals ground_truth.json estimand_gap.normalized_l2.
-- Descriptive results (n=300 SCMs, seed 0): estimand_gap 0.483 [0.468,0.498]; model_misfit xgboost 0.293 / mlp 0.317; explainer_error kernelshap 0.006 (xgb) / 0.010 (mlp), lime 0.185 (xgb) / 0.138 (mlp); total_error_l2 xgboost exact 0.528 [0.515,0.540], lime 0.596; mlp exact 0.486, lime 0.531.
-- Output locations (all gitignored, in repo_clone/): data/scms_small, data/scms_medium, data/scms, results/ (10-SCM, 3 seeds, 270 pairs), results_medium/ (30 SCMs, seed 0), results_full/ (300 SCMs, seed 0). Sandbox copies only -- NOT in the user's local repo; regenerate there with the commands in README "Metrics and Results Pipeline".
-- Docs updated: README.md (decomposition wording, 300 SCMs, pipeline section, verified-runs paragraph, 4 checkboxes ticked: rank/L2, decomposition, orchestrator, comparison tables), docs/SCHEMAS.md (reference fields, NaN semantics, section 5 tables), tasks.py (attributions/errors/tables), .gitignore (`results_*/`), configs/scm_medium.yaml (new).
-- FINAL FULL TEST RUN: `../venv/bin/python -m pytest tests -q -p no:cacheprovider` -> **131 passed, 0 failed**, 28 s.
+## Final handoff state (checkpoint 8 — verified in session 3)
+- Base commit: `001199469606d2bf4505911e9880e86826b02d29` (`0011994`, "Merge pull request #3 ..."), equals merge-base with origin/main.
+- Branch `feat/poojitha-metrics-integration`; 4 commits on top of base (the 5th "final handoff" commit hash is in the patch/`git log`; see PATCH below):
+  - `15a8523` feat(explainers): reference SHAP in sidecars
+  - `672fabaf` feat(metrics): validated pipeline runner, SCM-level tables, metric tests
+  - `58d7fde` docs: progress + resume files
+  - `ac8a8cd` docs(metrics): README/SCHEMAS/tasks/config/.gitignore
+  - plus one final commit "docs: final handoff fixes" (SCHEMAS 'orthogonal' wording, README test command, progress files). Nothing pushed.
+- PATCH (source of truth): `datasphere_metrics_integration.patch`, produced by `git format-patch 0011994..HEAD --stdout`, delivered to the user as a chat attachment (file named exactly that). Contains only source/tests/docs/config (21 files, no data/results/secrets). Its SHA-256 is recorded in the final chat message.
+- Verified in session 3 against real files (not memory): 4 commits + base; benchmark outputs on disk: 2700 sidecars, 2700 parquets, errors.csv 2700 rows, 300 SCMs, seed [0] only, 600 NaN total_error_l2 == 600 permutation rows, TreeSHAP max explainer_error 3.258e-07.
+- Docs fixed in session 3: SCHEMAS.md "orthogonal" -> "ordered / not additive"; README now states the test command.
 
 ## Remaining tasks (priority order)
-1. (Optional) seeds 1 and 2 on the full benchmark: `python scripts/run_attributions.py --scms-dir data/scms --results-dir results_full --seeds 1 2` (~66 min; resumable), then rerun pipeline_runner + results_tables (cheap, idempotent).
-2. (Optional, only if wanted) IHDP / Adult / California Housing: NOT started; no compatible ground truth for the SCM decomposition -> do not force.
-3. Teammate coordination: observables (`results/observables.csv`) belong to Diran; not implemented here. `scripts/make_mock_results.py` still writes MOCK errors/attributions into `results/` (teammate file, left unchanged).
-4. User actions: review the branch, push when ready (nothing pushed by Claude), open PR.
+1. User: apply the patch to the Windows repo (steps below), run the tests, review, then push / open PR themselves.
+2. (Optional, needs user agreement first) seeds 1 and 2 on the full benchmark: ~33 min per seed on 2 CPU cores (~66 min), resumable: `python scripts/run_attributions.py --scms-dir data/scms --results-dir results_full --seeds 1 2`, then re-run pipeline_runner + results_tables (idempotent, seconds).
+3. (Optional) IHDP / Adult / California Housing: NOT started; no compatible causal ground truth for the SCM decomposition. No results exist or are claimed.
+4. Observables (`results/observables.csv`) belong to a teammate; not implemented here.
+
+## Windows PowerShell: apply the patch safely
+```powershell
+cd "C:\Users\POOJITHA LAKSHMI\OneDrive\Desktop\STUDY\ADA\Jackfruit\datasphere"
+git status --short                                  # must be empty; otherwise commit/stash first
+git fetch origin; git checkout main; git pull --ff-only origin main
+git log --oneline -1                                # expect 0011994 (or later; if later, use --3way below)
+git checkout -b feat/poojitha-metrics-integration
+git apply --check "$HOME\Downloads\datasphere_metrics_integration.patch"   # dry run, changes nothing
+git am --3way "$HOME\Downloads\datasphere_metrics_integration.patch"
+git log --oneline -6; git diff --stat main..HEAD
+# if anything goes wrong:  git am --abort   (restores the branch exactly)
+```
+## Install and run
+```powershell
+py -3.11 -m venv .venv; .\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+python -m pytest tests -q                            # expect 131 passed
+python tasks.py generate-small
+python scripts/run_attributions.py --scms-dir data/scms_small --results-dir results_small --seeds 0 1 2
+python -m src.metrics.pipeline_runner --scms-dir data/scms_small --attributions-dir results_small/attributions --output-csv results_small/errors.csv
+python -m src.metrics.results_tables --errors-csv results_small/errors.csv --output-dir results_small/tables --scms-dir data/scms_small
+```
 
 ## Known limitations
 - Exact reference needs d<=10 (2^d enumeration); larger d raises.
