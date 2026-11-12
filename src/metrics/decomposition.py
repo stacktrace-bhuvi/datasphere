@@ -13,7 +13,11 @@ from src.metrics.error_metrics import normalized_l2, rank_metrics
 
 
 def _vec(x, name):
-    a = np.asarray(x, dtype=float).reshape(-1)
+    a = np.asarray(x, dtype=float)
+    if a.ndim == 0:
+        a = a.reshape(1)
+    if a.ndim != 1:
+        raise ValueError(f"{name} must be a 1-D vector, got shape {a.shape}")
     if not a.size or not np.all(np.isfinite(a)):
         raise ValueError(f"{name} must be a non-empty finite vector")
     if np.any(a < 0):

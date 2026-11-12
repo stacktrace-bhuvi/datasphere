@@ -9,6 +9,11 @@ Available commands:
     generate-small   Generate a small benchmark of 10 SCMs (sanity check)
     generate-full    Generate the full benchmark of 300 SCMs from configs/scm_default.yaml
     mock             Generate mock results (attributions, errors, observables) conforming to SCHEMAS.md
+    attributions     Train models + run explainers (+ fitted-model reference SHAP): scripts/run_attributions.py
+    errors           Build results/errors.csv from real artifacts: python -m src.metrics.pipeline_runner
+    tables           Build results/tables/*.csv from errors.csv: python -m src.metrics.results_tables
+                     (attributions/errors/tables forward extra arguments, e.g.
+                      python tasks.py attributions --scms-dir data/scms --results-dir results --seeds 0)
     dry-run          Run generator in dry-run mode on full config without disk writes
 """
 
@@ -86,6 +91,28 @@ def mock() -> int:
     ])
 
 
+def _extra() -> list[str]:
+    return sys.argv[2:]
+
+
+def attributions() -> int:
+    """Run models and explainers over the SCM benchmark (extra args are forwarded)."""
+    return run_command([sys.executable, str(ROOT_DIR / "scripts" / "run_attributions.py"), *_extra()])
+
+
+def errors() -> int:
+    """Compute results/errors.csv from ground truth + attribution artifacts (extra args forwarded)."""
+    args = _extra() or ["--scms-dir", str(ROOT_DIR / "data" / "scms_small"),
+                        "--attributions-dir", str(ROOT_DIR / "results" / "attributions"),
+                        "--output-csv", str(ROOT_DIR / "results" / "errors.csv")]
+    return run_command([sys.executable, "-m", "src.metrics.pipeline_runner", *args])
+
+
+def tables() -> int:
+    """Summarize errors.csv into results/tables/ (extra args forwarded)."""
+    return run_command([sys.executable, "-m", "src.metrics.results_tables", *_extra()])
+
+
 def dry_run() -> int:
     """Run generator in dry-run mode on full config without disk writes."""
     cfg = ROOT_DIR / "configs" / "scm_default.yaml"
@@ -107,6 +134,9 @@ COMMANDS = {
     "generate-small": generate_small,
     "generate-full": generate_full,
     "mock": mock,
+    "attributions": attributions,
+    "errors": errors,
+    "tables": tables,
     "dry-run": dry_run,
 }
 
