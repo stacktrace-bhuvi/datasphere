@@ -149,8 +149,8 @@
       "total_error_rank": 0.4282,
       "estimand_gap": 0.483,
       "model_misfit": 0.1746,
-      "explainer_error": 0.4867,
-      "total_error_l2": 0.6609,
+      "explainer_error": null,
+      "total_error_l2": null,
       "top_k_overlap": 0.9027
     },
     "xgboost/exact": {
@@ -209,8 +209,8 @@
       "total_error_rank": 0.4335,
       "estimand_gap": 0.483,
       "model_misfit": 0.1507,
-      "explainer_error": 0.4995,
-      "total_error_l2": 0.6882,
+      "explainer_error": null,
+      "total_error_l2": null,
       "top_k_overlap": 0.8965
     },
     "xgboost/treeshap": {
@@ -286,8 +286,8 @@
       "total_error_rank": 0.4309,
       "estimand_gap": 0.483,
       "model_misfit": 0.1627,
-      "explainer_error": 0.4931,
-      "total_error_l2": 0.6745,
+      "explainer_error": null,
+      "total_error_l2": null,
       "top_k_overlap": 0.8996
     },
     "treeshap": {
@@ -318,8 +318,8 @@
       "total_error_rank": 0.5248,
       "estimand_gap": 0.4808,
       "model_misfit": 0.1122,
-      "explainer_error": 0.1145,
-      "total_error_l2": 0.496,
+      "explainer_error": 0.0405,
+      "total_error_l2": 0.4784,
       "top_k_overlap": 1.0
     },
     "confounded_fork": {
@@ -333,8 +333,8 @@
       "total_error_rank": 0.3914,
       "estimand_gap": 0.4477,
       "model_misfit": 0.2218,
-      "explainer_error": 0.1703,
-      "total_error_l2": 0.5552,
+      "explainer_error": 0.0456,
+      "total_error_l2": 0.4966,
       "top_k_overlap": 0.9407
     },
     "erdos_renyi_dag": {
@@ -348,8 +348,8 @@
       "total_error_rank": 0.3676,
       "estimand_gap": 0.4262,
       "model_misfit": 0.1563,
-      "explainer_error": 0.1408,
-      "total_error_l2": 0.4849,
+      "explainer_error": 0.0422,
+      "total_error_l2": 0.4411,
       "top_k_overlap": 0.8745
     },
     "feature_collider": {
@@ -363,8 +363,8 @@
       "total_error_rank": 0.4509,
       "estimand_gap": 0.5361,
       "model_misfit": 0.1588,
-      "explainer_error": 0.1358,
-      "total_error_l2": 0.5682,
+      "explainer_error": 0.0357,
+      "total_error_l2": 0.5293,
       "top_k_overlap": 0.7871
     },
     "layered": {
@@ -378,8 +378,8 @@
       "total_error_rank": 0.4345,
       "estimand_gap": 0.5243,
       "model_misfit": 0.1576,
-      "explainer_error": 0.1494,
-      "total_error_l2": 0.5708,
+      "explainer_error": 0.0454,
+      "total_error_l2": 0.5304,
       "top_k_overlap": 0.8884
     }
   },

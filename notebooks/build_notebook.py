@@ -56,7 +56,7 @@ warnings.filterwarnings("ignore")
 import numpy as np, pandas as pd, matplotlib.pyplot as plt, networkx as nx
 pd.set_option("display.width", 160); pd.set_option("display.max_columns", 40); pd.set_option("display.precision", 3)
 from IPython.display import Image, display
-print("repo root:", ROOT)
+print("repo root:", ROOT.name)
 ''')
 
 md("""
@@ -186,7 +186,7 @@ explainer disagreement, explainer stability, or a constant.
 code('''
 RES = ROOT / "results" if (ROOT / "results" / "diagnostic_summary.json").exists() else ROOT / "results_small"
 SCMS = ROOT / "data" / ("scms" if RES.name == "results" else "scms_small")
-print("using", RES)
+print("using", RES.relative_to(ROOT))
 summary = json.load(open(RES / "diagnostic_summary.json"))
 errors = pd.read_csv(RES / "errors.csv").merge(pd.read_csv(SCMS / "manifest.csv")[["scm_id", "family", "split", "d"]], on="scm_id")
 observables = pd.read_csv(RES / "observables.csv")

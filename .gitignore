@@ -37,3 +37,4 @@ report/*.jpg
 report/*.aux
 report/*.log
 report/*.out
+results_*/

@@ -70,14 +70,24 @@ The part of the error a practitioner can act on (model, explainer) is visible in
 
 ## Error Decomposition
 
-$$\text{Total Error} = \underbrace{\left| \tau(X_j) - \phi_j(f^*) \right|}_{\text{Estimand Gap}} + \underbrace{\left| \phi_j(f^*) - \phi_j(f) \right|}_{\text{Model Misfit}} + \underbrace{\left| \phi_j(f) - \hat{E}(f, X_j) \right|}_{\text{Explainer Approximation Error}}$$
+To pinpoint where explanations fail, we decompose the total error between an empirical explanation $\hat{E}(f, X_j)$ and the true causal estimand $\tau(X_j)$ into three ordered components:
+
+$$\text{Total Error} \le \underbrace{\left| \tau(X_j) - \phi_j(f^*) \right|}_{\text{Estimand Gap}} + \underbrace{\left| \phi_j(f^*) - \phi_j(f) \right|}_{\text{Model Misfit}} + \underbrace{\left| \phi_j(f) - \hat{E}(f, X_j) \right|}_{\text{Explainer Approximation Error}}$$
 
 - $\tau(X_j)$: true total interventional effect under $\text{do}(X_j)$.
 - $\phi_j(f^*)$: exact interventional SHAP on the ground-truth function $f^*$.
 - $\phi_j(f)$: exact SHAP on the fitted model $f$ (the `exact` explainer).
 - $\hat{E}(f, X_j)$: the empirical attribution (KernelSHAP, LIME, ...).
 
-The feature-wise vectors telescope exactly; the scalar norms of the components are reported separately and are **not** additive. Because $\tau$ (outcome units) and SHAP (contribution units) live on different scales, every component is also computed on importance shares $|v| / \|v\|_1$ (`*_share` columns), which is the scale-free comparison used in the report.
+> **How the decomposition is computed in code.** All quantities are feature-wise *non-negative magnitude vectors* in order `X1..Xd`: `tau` → `oracle_mean_abs_shap` (SHAP of the true function $f^*$) → `fitted_model_mean_abs_shap` (exact SHAP of the fitted model $f$) → `mean_abs_attributions` (selected explainer). The three difference **vectors telescope exactly** to `tau − explainer`; their normalized **L2 norms do not add up** to the total (different denominators, triangle inequality), so the three columns of `errors.csv` must not be summed. See `docs/SCHEMAS.md` §3.
+>
+> Because $\tau$ (outcome units) and SHAP (contribution units) live on different scales, every component is also computed on importance shares $|v| / \|v\|_1$ (`*_share` columns) and in rank space (`*_rank`), which are the scale-free comparisons used in the report.
+
+### Component Definitions
+
+1. **Estimand Gap:** Quantifies the inherent structural divergence between the game-theoretic attribution objective and the causal interventional estimand. This is structural and computed directly per SCM.
+2. **Model Misfit:** Measures the discrepancy introduced when the predictive model $f$ fails to capture the true data-generating function $f^*$ (due to inductive bias, underfitting, or overfitting).
+3. **Explainer Approximation Error:** Measures variance and bias introduced by finite-sample approximations, local linear surrogate modeling, or background dataset sampling in the explainer.
 
 ---
 
@@ -160,6 +170,32 @@ Other commands: `python tasks.py dry-run` (clipping statistics without writing),
 
 ---
 
+## Metrics and Results Pipeline (attributions → errors → tables)
+
+Prerequisite: `pip install -r requirements.txt` in a Python 3.11 virtual environment (`xgboost` must satisfy `>=2.0,<3.1`; a newer XGBoost breaks `shap` TreeExplainer on older SHAP releases).
+
+```bash
+# 1. SCMs + causal ground truth (data/ is git-ignored)
+python tasks.py generate-small                 # 10 SCMs  -> data/scms_small
+python tasks.py generate-full                  # 300 SCMs -> data/scms
+# 2. Train models, run explainers, compute the fitted-model reference SHAP
+python scripts/run_attributions.py --scms-dir data/scms_small --results-dir results --seeds 0 1 2
+# 3. Error decomposition -> results/errors.csv
+python -m src.metrics.pipeline_runner --scms-dir data/scms_small --attributions-dir results/attributions --output-csv results/errors.csv
+# 4. Summary tables -> results/tables/*.csv
+python -m src.metrics.results_tables --errors-csv results/errors.csv --output-dir results/tables --scms-dir data/scms_small
+```
+
+(`python tasks.py attributions|errors|tables [args]` wrap steps 2–4.) **Run the tests** with `python -m pytest tests -q` (or `python tasks.py test`); the suite includes a small real end-to-end run (SCM → ground truth → train → explain → errors → tables) and needs no pre-generated data. Step 2 is resumable: finished artifacts are skipped, `--force` recomputes. Every attribution sidecar stores `fitted_model_mean_abs_shap`, the **exact** SHAP of the fitted model on the same explain/background rows as the ground truth. It is computed once per SCM × model × seed (cost = 100 × 50 × 2^d model evaluations, exact only for d ≤ 10) and shared by all explainers; the `exact` explainer reuses it. Step 3 refuses artifacts without it (or with mismatching rows, dimensions, feature order, non-finite values) and lists the problems; `--allow-skipped` keeps the valid rows and writes `errors_skipped.csv`.
+
+> `scripts/make_mock_results.py` writes **mock** files into `results/`. Do not mix them with real runs; use a different `--results-dir` for real experiments.
+
+**Interpreting results.** `estimand_gap` = how far SHAP of the *true* function is from the causal effect; `model_misfit` = how far the *fitted* model's exact SHAP is from the true function's; `explainer_error` = how far the chosen explainer is from the fitted model's exact SHAP. A small `explainer_error` only means the explainer is faithful to the *model*; it says nothing about causal correctness (that is what `estimand_gap` and `model_misfit` measure). `permutation` importance is a global test-MSE increase, not a SHAP-unit quantity, so its L2-based columns are NaN. Tables are descriptive (unit = SCM, 95% t-intervals across SCMs), not hypothesis tests.
+
+**Earlier verified run (Metrics and Results, before the `outcome_noise_scale` change, i.e. outcome noise 1.0; superseded by the headline results above).** Full synthetic benchmark: 300 SCMs (60 per family, d = 5…10) × {XGBoost: exact, TreeSHAP, KernelSHAP, LIME, permutation; MLP: exact, KernelSHAP, LIME, permutation} × **seed 0 only** = 2700 attribution artifacts → 2700 `errors.csv` rows (generation ≈ 20 min, attributions ≈ 33 min on 2 CPU cores). Seeds 1 and 2 were not run on the full benchmark (a 10-SCM run used 3 seeds). Mean estimand gap 0.483 (95% CI 0.468–0.498); mean model misfit 0.293 (XGBoost) / 0.317 (MLP); mean explainer error: exact/TreeSHAP 0.000, KernelSHAP 0.006–0.010, LIME 0.138 (MLP) / 0.185 (XGBoost). On this benchmark most of the error against causal ground truth comes from the estimand gap and model misfit, not from explainer approximation (except LIME). TreeSHAP agrees with the independent exact reference to < 1e-5 for every d. Optional validation on IHDP / Adult Income / California Housing was **not** done (they have no SCM ground truth compatible with the decomposition).
+
+---
+
 ## Team and Work Split
 
 | Member | GitHub | Responsibilities |
@@ -185,7 +221,7 @@ Other commands: `python tasks.py dry-run` (clipping statistics without writing),
   - [x] Seed replication and attribution artifact persistence
 - [x] **Metrics and Decomposition (`src/metrics`)**
   - [x] Rank (Kendall $\tau_b$), normalized $L_2$, share-space $L_2$, top-$k$ overlap
-  - [x] Three-way decomposition (raw, share and rank space); stage 2→3 link through the `exact` sidecar
+  - [x] Three-way decomposition (raw, share and rank space); fitted-model reference SHAP stored in every sidecar (`src/explainers/reference.py`)
   - [x] Error table builder and summary tables
 - [x] **Observable Diagnostics (`src/observables`)**
   - [x] Dependence metrics (|corr|, VIF, mutual information, feature–target association)

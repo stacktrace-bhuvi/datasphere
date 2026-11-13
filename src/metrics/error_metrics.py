@@ -18,7 +18,11 @@ from scipy.stats import kendalltau, spearmanr
 
 
 def _vector(values, name: str) -> np.ndarray:
-    arr = np.asarray(values, dtype=float).reshape(-1)
+    arr = np.asarray(values, dtype=float)
+    if arr.ndim == 0:
+        arr = arr.reshape(1)
+    if arr.ndim != 1:       # a (2,2) array must not silently match a length-4 vector
+        raise ValueError(f"{name} must be a 1-D vector, got shape {arr.shape}")
     if arr.size == 0:
         raise ValueError(f"{name} must not be empty")
     if not np.all(np.isfinite(arr)):
@@ -71,7 +75,12 @@ def top_k_overlap(reference, estimate, k: int | None = None) -> float:
 
 
 def rank_metrics(reference, estimate) -> dict[str, float]:
-    """Return Kendall tau-b, Spearman rho, and 1 - Kendall tau-b rank error."""
+    """Return Kendall tau-b, Spearman rho, and 1 - Kendall tau-b rank error.
+
+    Tau-b is tie-aware (many exact-zero attributions are expected). If either vector is constant
+    the correlation is undefined; it is reported as 0.0 (no rank information), so
+    total_error_rank = 1.0, rather than NaN.
+    """
     a, b = _vector(reference, "reference"), _vector(estimate, "estimate")
     if a.shape != b.shape:
         raise ValueError("reference and estimate must have the same shape")
